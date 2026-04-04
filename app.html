@@ -1,311 +1,325 @@
 <script>
 /**
- * SYSGESTAO v2.0 - Frontend Logic
- * JavaScript ES6+ Puro
+ * SYSGESTAO v2.0 - Frontend JavaScript
+ * Lógica da Aplicação
  */
 
-// --- ESTADO GLOBAL DA APLICAÇÃO ---
-const AppState = {
-  user: null,
-  currentView: 'dashboard',
-  data: {
-    leitos: [],
-    pacientes: [],
-    logs: []
-  }
+// --- ESTADO GLOBAL ---
+let currentUser = null;
+let allData = {
+  leitos: [],
+  pacientes: [],
+  movimentacoes: [],
+  setores: []
 };
 
 // --- INICIALIZAÇÃO ---
 document.addEventListener('DOMContentLoaded', () => {
+  console.log('SYSGESTAO v2.0 Iniciado');
   updateDateDisplay();
-  // Verifica se há sessão salva (opcional, aqui faremos login sempre por segurança)
+  
+  // Verifica se há sessão salva (opcional, simples)
+  const savedUser = localStorage.getItem('sysgestao_user');
+  if (savedUser) {
+    currentUser = JSON.parse(savedUser);
+    showAppScreen();
+  }
 });
 
 function updateDateDisplay() {
   const now = new Date();
-  const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+  const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
   document.getElementById('current-date').textContent = now.toLocaleDateString('pt-BR', options);
 }
 
 // --- AUTENTICAÇÃO ---
-
-function handleLogin(e) {
-  e.preventDefault();
+function handleLogin(event) {
+  event.preventDefault();
+  
   const matricula = document.getElementById('matricula').value;
   const senha = document.getElementById('senha').value;
   const btn = document.getElementById('btn-login');
   const errorMsg = document.getElementById('login-error');
-
+  
   // UI Loading
-  btn.disabled = true;
-  btn.querySelector('.btn-text').textContent = 'Verificando...';
+  btn.querySelector('.btn-text').classList.add('hidden');
   btn.querySelector('.loader').classList.remove('hidden');
   errorMsg.classList.add('hidden');
-
-  // Chamada ao Backend (Code.gs)
+  
+  // Chamada ao Backend
   google.script.run
     .withSuccessHandler(onLoginSuccess)
-    .withFailureHandler(onLoginError)
+    .withFailureHandler(onLoginFailure)
     .login(matricula, senha);
 }
 
 function onLoginSuccess(response) {
   const btn = document.getElementById('btn-login');
-  btn.disabled = false;
-  btn.querySelector('.btn-text').textContent = 'Entrar no Sistema';
+  const errorMsg = document.getElementById('login-error');
+  
+  // Reset UI Button
+  btn.querySelector('.btn-text').classList.remove('hidden');
   btn.querySelector('.loader').classList.add('hidden');
-
+  
   if (response.success) {
-    AppState.user = response.user;
-    initializeApp();
+    currentUser = response.user;
+    localStorage.setItem('sysgestao_user', JSON.stringify(currentUser));
+    showAppScreen();
+    loadInitialData();
+    showToast(`Bem-vindo, ${currentUser.nome}!`, 'success');
   } else {
-    const errorMsg = document.getElementById('login-error');
     errorMsg.textContent = response.message;
     errorMsg.classList.remove('hidden');
   }
 }
 
-function onLoginError(error) {
+function onLoginFailure(error) {
   const btn = document.getElementById('btn-login');
-  btn.disabled = false;
-  btn.querySelector('.btn-text').textContent = 'Entrar no Sistema';
+  const errorMsg = document.getElementById('login-error');
+  
+  btn.querySelector('.btn-text').classList.remove('hidden');
   btn.querySelector('.loader').classList.add('hidden');
   
-  document.getElementById('login-error').textContent = 'Erro de conexão: ' + error;
-  document.getElementById('login-error').classList.remove('hidden');
+  errorMsg.textContent = 'Erro de conexão: ' + error;
+  errorMsg.classList.remove('hidden');
 }
 
 function logout() {
-  AppState.user = null;
+  currentUser = null;
+  localStorage.removeItem('sysgestao_user');
   document.getElementById('app-screen').classList.add('hidden');
   document.getElementById('login-screen').classList.remove('hidden');
   document.getElementById('login-form').reset();
 }
 
 // --- NAVEGAÇÃO E UI ---
-
-function initializeApp() {
-  // Troca de tela
+function showAppScreen() {
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('app-screen').classList.remove('hidden');
   
-  // Atualiza info do usuário
-  document.getElementById('user-name-display').textContent = AppState.user.nome;
-  document.getElementById('user-role-display').textContent = AppState.user.perfil;
-  document.getElementById('user-avatar').textContent = AppState.user.nome.charAt(0).toUpperCase();
-
-  // Carrega dados iniciais
-  loadAllData();
+  // Atualiza info do usuário na sidebar
+  document.getElementById('user-name-display').textContent = currentUser.nome;
+  document.getElementById('user-role-display').textContent = currentUser.perfil;
+  document.getElementById('user-avatar').textContent = currentUser.nome.charAt(0).toUpperCase();
   
-  // Vai para dashboard
+  // Carrega dados iniciais e vai para dashboard
   navigate('dashboard');
 }
 
 function navigate(viewName) {
-  AppState.currentView = viewName;
-  
-  // Atualiza Menu
-  document.querySelectorAll('.nav-item').forEach(el => {
-    el.classList.remove('active');
-    if(el.getAttribute('onclick').includes(viewName)) {
-      el.classList.add('active');
+  // Atualiza Menu Ativo
+  document.querySelectorAll('.nav-item').forEach(item => {
+    item.classList.remove('active');
+    if (item.getAttribute('onclick').includes(viewName)) {
+      item.classList.add('active');
     }
   });
+  
+  // Esconde todas as views
+  document.querySelectorAll('.view-section').forEach(el => el.classList.add('hidden'));
+  
+  // Mostra a view selecionada
+  const target = document.getElementById(`view-${viewName}`);
+  if (target) {
+    target.classList.remove('hidden');
+    document.getElementById('page-title').textContent = getViewTitle(viewName);
+    
+    // Carrega dados específicos se necessário
+    if (viewName === 'dashboard') renderDashboard();
+    if (viewName === 'leitos') renderLeitos();
+    if (viewName === 'pacientes') renderPacientes();
+  }
+}
 
-  // Atualiza Título
+function getViewTitle(name) {
   const titles = {
     'dashboard': 'Visão Geral',
     'leitos': 'Mapa de Leitos',
-    'pacientes': 'Gestão de Pacientes',
+    'pacientes': 'Pacientes Internados',
     'transferencias': 'Transferências',
     'pa': 'Pronto Atendimento',
     'altas': 'Altas e Óbitos',
     'equipes': 'Equipes',
     'config': 'Configurações'
   };
-  document.getElementById('page-title').textContent = titles[viewName] || 'Sistema';
-
-  // Mostra/Esconde Views
-  document.querySelectorAll('.view-section').forEach(el => el.classList.add('hidden'));
-  const target = document.getElementById(`view-${viewName}`);
-  if(target) target.classList.remove('hidden');
-
-  // Recarrega dados específicos se necessário
-  if(viewName === 'leitos') renderLeitos();
-  if(viewName === 'pacientes') renderPacientes();
-  if(viewName === 'dashboard') renderDashboard();
+  return titles[name] || 'Sistema';
 }
 
 function toggleTheme() {
-  document.body.classList.toggle('dark-theme');
+  const body = document.body;
   const icon = document.getElementById('theme-icon');
-  if(document.body.classList.contains('dark-theme')) {
-    icon.textContent = 'light_mode';
-    localStorage.setItem('theme', 'dark');
-  } else {
+  
+  if (body.getAttribute('data-theme') === 'dark') {
+    body.removeAttribute('data-theme');
     icon.textContent = 'dark_mode';
-    localStorage.setItem('theme', 'light');
+    localStorage.setItem('sysgestao_theme', 'light');
+  } else {
+    body.setAttribute('data-theme', 'dark');
+    icon.textContent = 'light_mode';
+    localStorage.setItem('sysgestao_theme', 'dark');
   }
 }
 
-// --- LÓGICA DE DADOS E RENDERIZAÇÃO ---
-
-function loadAllData() {
-  // Busca Leitos e Pacientes simultaneamente (promessas simuladas com callbacks aninhados ou sequenciais)
-  // No GAS, chamadas são assíncronas.
-  
-  google.script.run.withSuccessHandler(data => {
-    AppState.data.leitos = data;
-    renderDashboard(); // Atualiza stats
-    if(AppState.currentView === 'leitos') renderLeitos();
-    updateLeitoSelect(); // Atualiza selects de modal
-  }).getMapaLeitos();
-
-  google.script.run.withSuccessHandler(data => {
-    AppState.data.pacientes = data;
-    if(AppState.currentView === 'pacientes') renderPacientes();
-  }).getDados('Pacientes');
-  
-  // Logs recentes para dashboard
-  google.script.run.withSuccessHandler(data => {
-    AppState.data.logs = data.slice(0, 5); // Pega apenas os 5 últimos
-    renderDashboardLogs();
-  }).getDados('Logs_Auditoria');
+// Carrega tema salvo
+const savedTheme = localStorage.getItem('sysgestao_theme');
+if (savedTheme === 'dark') {
+  document.body.setAttribute('data-theme', 'dark');
+  document.getElementById('theme-icon').textContent = 'light_mode';
 }
 
-// Dashboard
+// --- CARREGAMENTO DE DADOS ---
+function loadInitialData() {
+  // Busca todos os dados necessários do backend
+  google.script.run
+    .withSuccessHandler(data => {
+      allData.leitos = data.leitos || [];
+      allData.pacientes = data.pacientes || [];
+      allData.movimentacoes = data.movimentacoes || [];
+      renderDashboard();
+    })
+    .withFailureHandler(err => showToast('Erro ao carregar dados: ' + err, 'error'))
+    .getAllData(); // Função auxiliar que precisaremos criar no Code.gs
+}
+
+// Se não tiver getAllData, fazemos chamadas separadas:
+function loadInitialDataSeparate() {
+  Promise.all([
+    new Promise(resolve => google.script.run.withSuccessHandler(resolve).getDados('Leitos')),
+    new Promise(resolve => google.script.run.withSuccessHandler(resolve).getDados('Pacientes')),
+    new Promise(resolve => google.script.run.withSuccessHandler(resolve).getDados('Movimentacao'))
+  ]).then(([leitos, pacientes, movs]) => {
+    allData.leitos = leitos;
+    allData.pacientes = pacientes;
+    allData.movimentacoes = movs;
+    renderDashboard();
+  });
+}
+
+// --- RENDERIZAÇÃO DASHBOARD ---
 function renderDashboard() {
-  const total = AppState.data.leitos.length;
-  const ocupados = AppState.data.leitos.filter(l => l.PacienteID).length;
+  const total = allData.leitos.length;
+  const ocupados = allData.leitos.filter(l => l.Status === 'Ocupado').length;
   const livres = total - ocupados;
+  const paCount = allData.pacientes.filter(p => p.Status === 'PA').length;
   
-  // Animação simples de números
-  animateValue("stat-total-leitos", 0, total, 1000);
-  animateValue("stat-ocupados", 0, ocupados, 1000);
-  animateValue("stat-livres", 0, livres, 1000);
-  // Stat PA seria outro dado, simplificado aqui
-  document.getElementById("stat-pa").textContent = "0"; 
-}
-
-function renderDashboardLogs() {
+  document.getElementById('stat-total-leitos').textContent = total;
+  document.getElementById('stat-ocupados').textContent = ocupados;
+  document.getElementById('stat-livres').textContent = livres;
+  document.getElementById('stat-pa').textContent = paCount;
+  
+  // Tabela de atividades recentes (últimas 5 movimentações)
   const tbody = document.getElementById('dashboard-recent-logs');
   tbody.innerHTML = '';
   
-  if(!AppState.data.logs || AppState.data.logs.length === 0) {
+  const recent = allData.movimentacoes.slice(-5).reverse();
+  if (recent.length === 0) {
     tbody.innerHTML = '<tr><td colspan="4" class="text-center">Nenhuma atividade recente</td></tr>';
     return;
   }
-
-  AppState.data.logs.forEach(log => {
-    const date = new Date(log.Timestamp);
-    const timeStr = date.toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'});
-    
+  
+  recent.forEach(mov => {
     const tr = document.createElement('tr');
+    const date = new Date(mov.DataHora);
     tr.innerHTML = `
-      <td>${timeStr}</td>
-      <td>${log.Detalhes ? log.Detalhes.substring(0, 20) + '...' : '-'}</td>
-      <td><span class="badge blue">${log.Acao}</span></td>
-      <td>${log.Usuario}</td>
+      <td>${date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</td>
+      <td>${mov.PacienteID || 'N/A'}</td>
+      <td><span class="status-badge">${mov.Tipo}</span></td>
+      <td>${mov.Usuario}</td>
     `;
     tbody.appendChild(tr);
   });
 }
 
-// Leitos
+// --- RENDERIZAÇÃO LEITOS ---
 function renderLeitos() {
   const grid = document.getElementById('leitos-grid');
   grid.innerHTML = '';
   
-  AppState.data.leitos.forEach(leito => {
-    const isOccupied = !!leito.PacienteID;
-    const card = document.createElement('div');
-    card.className = `card leito-card ${isOccupied ? 'occupied' : 'free'}`;
+  if (allData.leitos.length === 0) {
+    grid.innerHTML = '<p class="text-center" style="grid-column: 1/-1;">Nenhum leito cadastrado.</p>';
+    return;
+  }
+  
+  allData.leitos.forEach(leito => {
+    const isOcupado = leito.Status === 'Ocupado';
+    const paciente = allData.pacientes.find(p => String(p._id) === String(leito.PacienteID));
     
-    const pacienteNome = leito.pacienteInfo ? leito.pacienteInfo.Nome : 'Livre';
-    const pacienteInfo = leito.pacienteInfo ? 
-      `<div class="patient-mini"><span class="material-icons-round">person</span> ${pacienteNome}</div>` : 
-      '<div class="status-text">Disponível</div>';
-
+    const card = document.createElement('div');
+    card.className = `card-leito ${isOcupado ? 'ocupado' : 'livre'}`;
     card.innerHTML = `
-      <div class="card-header">
-        <span class="badge ${leito.Setor === 'UTI' ? 'red' : 'blue'}">${leito.Setor}</span>
-        <h3>${leito.Nome}</h3>
+      <div class="leito-status ${isOcupado ? 'status-ocupado' : 'status-livre'}">
+        ${isOcupado ? 'Ocupado' : 'Livre'}
       </div>
-      <div class="card-body">
-        ${pacienteInfo}
-        <div class="meta-info">
-          <span><span class="material-icons-round">bed</span> ${leito.Tipo}</span>
+      <h4 style="margin-bottom:0.5rem; font-size:1.1rem;">${leito.Nome}</h4>
+      <p style="color:var(--text-muted); font-size:0.85rem;">${leito.Setor} - ${leito.Tipo}</p>
+      
+      ${isOcupado && paciente ? `
+        <div style="margin-top:1rem; padding-top:0.5rem; border-top:1px solid var(--border-color);">
+          <p style="font-weight:600;">${paciente.Nome}</p>
+          <p style="font-size:0.8rem; color:var(--text-muted);">Entrada: ${new Date(paciente.DataEntrada).toLocaleDateString()}</p>
         </div>
-      </div>
-      <div class="card-actions">
-        ${isOccupied ? 
-          `<button class="btn btn-sm btn-secondary" onclick="verPaciente('${leito.PacienteID}')">Ver</button>` : 
-          `<button class="btn btn-sm btn-primary" onclick="admitirNoLeito('${leito._id}')">Admitir</button>`
-        }
+      ` : '<p style="margin-top:1rem; color:var(--text-muted); font-style:italic;">Disponível</p>'}
+      
+      <div style="margin-top:1rem; display:flex; gap:0.5rem;">
+        <button class="btn-icon" title="Detalhes" onclick="alert('Detalhes do leito ${leito.Nome}')">
+          <span class="material-icons-round" style="font-size:1.2rem;">visibility</span>
+        </button>
+        ${!isOcupado ? `
+        <button class="btn-icon" title="Editar" onclick="editLeito('${leito._id}')">
+          <span class="material-icons-round" style="font-size:1.2rem;">edit</span>
+        </button>
+        ` : ''}
       </div>
     `;
     grid.appendChild(card);
   });
 }
 
-// Pacientes
+// --- RENDERIZAÇÃO PACIENTES ---
 function renderPacientes() {
   const tbody = document.getElementById('tabela-pacientes');
   tbody.innerHTML = '';
   
-  AppState.data.pacientes.forEach(p => {
-    if(p.Status === 'ALTA') return; // Ignora altas na lista principal
-    
+  const ativos = allData.pacientes.filter(p => p.Status !== 'ALTA' && p.Status !== 'OBITO');
+  
+  if (ativos.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center">Nenhum paciente ativo.</td></tr>';
+    return;
+  }
+  
+  ativos.forEach(p => {
+    const leito = allData.leitos.find(l => String(l.PacienteID) === String(p._id));
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><strong>${p.Nome}</strong></td>
       <td>${calcularIdade(p.DataNascimento)} / ${p.Genero}</td>
-      <td>${p.Convenio}</td>
-      <td>${p.LeitoAtual || 'Sem leito'}</td>
-      <td><span class="badge green">${p.Status}</span></td>
+      <td>${p.Convenio || 'N/A'}</td>
+      <td>${leito ? `${leito.Nome} (${leito.Setor})` : 'Sem leito'}</td>
+      <td><span class="status-badge status-${p.Status === 'INTERNADO' ? 'livre' : 'ocupado'}">${p.Status}</span></td>
       <td>
-        <button class="btn-icon btn-sm" title="Editar"><span class="material-icons-round">edit</span></button>
-        <button class="btn-icon btn-sm text-red" title="Alta"><span class="material-icons-round">assignment_turned_in</span></button>
+        <button class="btn-icon" title="Prontuário" onclick="alert('Prontuário de ${p.Nome}')">
+          <span class="material-icons-round" style="font-size:1.2rem;">description</span>
+        </button>
       </td>
     `;
     tbody.appendChild(tr);
   });
 }
 
-// Utilitários
-function animateValue(id, start, end, duration) {
-  const obj = document.getElementById(id);
-  let startTimestamp = null;
-  const step = (timestamp) => {
-    if (!startTimestamp) startTimestamp = timestamp;
-    const progress = Math.min((timestamp - startTimestamp) / duration, 1);
-    obj.innerHTML = Math.floor(progress * (end - start) + start);
-    if (progress < 1) {
-      window.requestAnimationFrame(step);
-    }
-  };
-  window.requestAnimationFrame(step);
-}
-
 function calcularIdade(dataNasc) {
-  if(!dataNasc) return '?';
-  const hoje = new Date();
-  const nasc = new Date(dataNasc);
-  let idade = hoje.getFullYear() - nasc.getFullYear();
-  const m = hoje.getMonth() - nasc.getMonth();
-  if (m < 0 || (m === 0 && hoje.getDate() < nasc.getDate())) {
-    idade--;
-  }
-  return idade;
+  if (!dataNasc) return '?';
+  const diff = Date.now() - new Date(dataNasc).getTime();
+  const ageDt = new Date(diff);
+  return Math.abs(ageDt.getUTCFullYear() - 1970);
 }
 
-// Modais
+// --- MODAIS E FORMULÁRIOS ---
 function openModal(modalId) {
   document.getElementById('modal-backdrop').classList.remove('hidden');
   document.getElementById(modalId).classList.remove('hidden');
   
-  if(modalId === 'modal-paciente') {
-    updateLeitoSelect();
+  if (modalId === 'modal-paciente') {
+    populateLeitosSelect();
   }
 }
 
@@ -314,77 +328,107 @@ function closeAllModals() {
   document.querySelectorAll('.modal').forEach(m => m.classList.add('hidden'));
 }
 
-function updateLeitoSelect() {
+function populateLeitosSelect() {
   const select = document.getElementById('paciente-leito');
   select.innerHTML = '<option value="">Selecione um leito livre...</option>';
   
-  const livres = AppState.data.leitos.filter(l => !l.PacienteID);
+  const livres = allData.leitos.filter(l => l.Status === 'Livre');
   livres.forEach(l => {
     const opt = document.createElement('option');
     opt.value = l._id;
-    opt.textContent = `${l.Nome} (${l.Setor})`;
+    opt.textContent = `${l.Nome} - ${l.Setor}`;
     select.appendChild(opt);
   });
 }
 
-// Ações de Formulário
-function saveLeito(e) {
-  e.preventDefault();
-  const dados = {
-    _id: document.getElementById('leito-id').value,
-    Nome: document.getElementById('leito-nome').value,
-    Setor: document.getElementById('leito-setor').value,
-    Tipo: document.getElementById('leito-tipo').value,
-    Status: 'Livre'
-  };
+function savePaciente(event) {
+  event.preventDefault();
   
-  showToast('Salvando...', 'info');
-  
-  google.script.run
-    .withSuccessHandler(res => {
-      showToast(res.message, res.success ? 'success' : 'error');
-      closeAllModals();
-      loadAllData();
-    })
-    .salvarDados('Leitos', dados);
-}
-
-function savePaciente(e) {
-  e.preventDefault();
-  const dados = {
+  const novoPaciente = {
     Nome: document.getElementById('paciente-nome').value,
     DataNascimento: document.getElementById('paciente-nasc').value,
     Genero: document.getElementById('paciente-genero').value,
     Convenio: document.getElementById('paciente-convenio').value,
     Status: 'INTERNADO',
-    DataEntrada: new Date()
-    // Aqui precisaria da lógica de vincular ao leito selecionado
+    DataEntrada: new Date().toISOString(),
+    _id: '' // Novo
   };
   
-  showToast('Admitindo paciente...', 'info');
+  const leitoId = document.getElementById('paciente-leito').value;
   
+  if (!leitoId) {
+    showToast('Selecione um leito!', 'error');
+    return;
+  }
+  
+  // Salva paciente
   google.script.run
     .withSuccessHandler(res => {
-      showToast(res.message, res.success ? 'success' : 'error');
-      closeAllModals();
-      loadAllData();
+      if (res.success) {
+        // Atualiza leito
+        const leito = allData.leitos.find(l => l._id === leitoId);
+        leito.Status = 'Ocupado';
+        leito.PacienteID = res.id || novoPaciente.Nome; // Simplificação
+        
+        google.script.run
+          .withSuccessHandler(() => {
+            showToast('Paciente admitido com sucesso!', 'success');
+            closeAllModals();
+            loadInitialDataSeparate(); // Recarrega tudo
+            document.getElementById('form-paciente').reset();
+          })
+          .salvarDados('Leitos', leito);
+      } else {
+        showToast('Erro: ' + res.message, 'error');
+      }
     })
-    .salvarDados('Pacientes', dados);
+    .salvarDados('Pacientes', novoPaciente);
 }
 
-function showToast(msg, type = 'info') {
+function saveLeito(event) {
+  event.preventDefault();
+  // Implementação similar a savePaciente
+  showToast('Funcionalidade em desenvolvimento', 'info');
+  closeAllModals();
+}
+
+function editLeito(id) {
+  const leito = allData.leitos.find(l => l._id === id);
+  if (!leito) return;
+  
+  document.getElementById('leito-id').value = leito._id;
+  document.getElementById('leito-nome').value = leito.Nome;
+  document.getElementById('leito-setor').value = leito.Setor;
+  document.getElementById('leito-tipo').value = leito.Tipo;
+  
+  openModal('modal-leito');
+}
+
+// --- UTILITÁRIOS ---
+function showToast(message, type = 'info') {
   const toast = document.getElementById('toast');
-  const icon = document.getElementById('toast-icon');
-  const text = document.getElementById('toast-message');
+  const msgEl = document.getElementById('toast-message');
+  const iconEl = document.getElementById('toast-icon');
   
-  text.textContent = msg;
-  icon.textContent = type === 'success' ? 'check_circle' : (type === 'error' ? 'error' : 'info');
+  msgEl.textContent = message;
+  iconEl.textContent = type === 'success' ? 'check_circle' : type === 'error' ? 'error' : 'info';
   
-  toast.className = `toast ${type} show`;
+  toast.className = `toast ${type}`;
+  toast.classList.remove('hidden');
   
   setTimeout(() => {
-    toast.classList.remove('show');
+    toast.classList.add('hidden');
   }, 3000);
 }
 
+function filterLeitos(query) {
+  // Implementação simples de filtro
+  const cards = document.querySelectorAll('.card-leito');
+  const term = query.toLowerCase();
+  
+  cards.forEach(card => {
+    const text = card.textContent.toLowerCase();
+    card.style.display = text.includes(term) ? 'block' : 'none';
+  });
+}
 </script>
