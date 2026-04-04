@@ -1,12 +1,14 @@
 /**
  * SYSGESTAO v2.0 - Sistema de Gestão Hospitalar
- * Backend Google Apps Script
+ * Backend Completo e Otimizado para Google Apps Script
  * 
- * Autor: Assistente de IA
- * Versão: 2.0.0
+ * Instruções:
+ * 1. Copie este código para o arquivo Code.gs
+ * 2. Execute a função 'instalarBancoDados' uma vez pelo menu ou manualmente
+ * 3. Login padrão: Matrícula '1', Senha '1234'
  */
 
-// --- CONFIGURAÇÕES GERAIS ---
+// ================= CONFIGURAÇÕES GERAIS =================
 const CONFIG = {
   SS_ID: SpreadsheetApp.getActiveSpreadsheet().getId(),
   SHEETS: {
@@ -18,10 +20,10 @@ const CONFIG = {
     EQUIPES: 'Equipes',
     LOGS: 'Logs_Auditoria'
   },
-  VERSAO: '2.0.0'
+  VERSAO: '2.0.0-FINAL'
 };
 
-// --- INICIALIZAÇÃO E MENU ---
+// ================= INICIALIZAÇÃO E MENU =================
 
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
@@ -30,9 +32,6 @@ function onOpen() {
     .addItem('⚙️ Instalar/Atualizar DB', 'instalarBancoDados')
     .addItem('📖 Sobre', 'mostrarSobre')
     .addToUi();
-  
-  // Opcional: Rodar instalação automática na primeira abertura se desejar
-  // instalarBancoDados(); 
 }
 
 function abrirSistema() {
@@ -46,7 +45,7 @@ function abrirSistema() {
       
     SpreadsheetApp.getUi().showModalDialog(htmlOutput, 'Carregando SYSGESTAO...');
   } catch (e) {
-    SpreadsheetApp.getUi().alert('Erro ao carregar sistema: ' + e.toString());
+    SpreadsheetApp.getUi().alert('Erro crítico ao carregar: ' + e.toString());
   }
 }
 
@@ -54,7 +53,7 @@ function mostrarSobre() {
   SpreadsheetApp.getUi().alert('SYSGESTAO v2.0\nSistema de Gestão Hospitalar\nVersão: ' + CONFIG.VERSAO + '\nDesenvolvido com Google Apps Script');
 }
 
-// --- GERENCIAMENTO DE DADOS (DATABASE) ---
+// ================= GERENCIAMENTO DE BANCO DE DADOS =================
 
 function instalarBancoDados() {
   const ss = SpreadsheetApp.openById(CONFIG.SS_ID);
@@ -65,11 +64,14 @@ function instalarBancoDados() {
     if (!sheet) {
       sheet = ss.insertSheet(sheetName);
       setupCabecalhos(sheet, sheetName);
+      Logger.log('Planilha criada: ' + sheetName);
     }
   });
   
   garantirAdminPadrao();
-  SpreadsheetApp.getUi().alert('✅ Banco de dados verificado e atualizado com sucesso!\nUsuário Admin padrão:\nMatrícula: 1\nSenha: 1234');
+  preencherSetoresPadrao();
+  
+  SpreadsheetApp.getUi().alert('✅ Banco de dados instalado/atualizado com sucesso!\n\nUsuário Admin:\nMatrícula: 1\nSenha: 1234');
 }
 
 function setupCabecalhos(sheet, nome) {
@@ -100,19 +102,34 @@ function setupCabecalhos(sheet, nome) {
   
   if (headers.length > 0 && sheet.getLastRow() === 0) {
     sheet.appendRow(headers[0]);
-    sheet.getRange(1, 1, 1, headers[0].length).setFontWeight('bold').setBackground('#e8f0fe');
+    sheet.getRange(1, 1, 1, headers[0].length)
+      .setFontWeight('bold')
+      .setBackground('#e8f0fe')
+      .setBorder(null, null, true, null, null, null);
   }
 }
 
 function garantirAdminPadrao() {
   const sheet = getSheet(CONFIG.SHEETS.USUARIOS);
-  // Verifica se já existe algum usuário
   if (sheet.getLastRow() < 2) {
     sheet.appendRow(['1', 'Administrador', '1234', 'ADMIN', 'TRUE']);
   }
 }
 
-// --- FUNÇÕES AUXILIARES DE PLANILHA ---
+function preencherSetoresPadrao() {
+  const sheet = getSheet(CONFIG.SHEETS.SETORES);
+  if (sheet.getLastRow() < 2) {
+    const setores = [
+      ['S-UTI', 'UTI Adulto', 'Unidade de Terapia Intensiva', 1],
+      ['S-ENF', 'Enfermaria', 'Enfermaria Geral', 2],
+      ['S-ISO', 'Isolamento', 'Quartos de Isolamento', 3],
+      ['S-OBS', 'Observação', 'Pronto Atendimento', 4]
+    ];
+    setores.forEach(s => sheet.appendRow(s));
+  }
+}
+
+// ================= FUNÇÕES AUXILIARES =================
 
 function getSheet(name) {
   const ss = SpreadsheetApp.openById(CONFIG.SS_ID);
@@ -132,20 +149,23 @@ function logAuditoria(usuario, acao, detalhes) {
   }
 }
 
-// --- AUTENTICAÇÃO ---
+function gerarID(prefixo) {
+  return prefixo + '-' + new Date().getTime().toString().slice(-6) + Math.floor(Math.random() * 100).toString().padStart(2, '0');
+}
+
+// ================= AUTENTICAÇÃO =================
 
 function login(matricula, senha) {
   try {
     const sheet = getSheet(CONFIG.SHEETS.USUARIOS);
     const data = sheet.getDataRange().getValues();
     
-    // Pula cabeçalho
     for (let i = 1; i < data.length; i++) {
       const row = data[i];
       // [Matricula, Nome, Senha, Perfil, Ativo]
-      if (String(row[0]) === String(matricula) && String(row[2]) === String(senha)) {
+      if (String(row[0]).trim() === String(matricula).trim() && String(row[2]) === String(senha)) {
         if (row[4] === true || row[4] === 'TRUE' || row[4] === 1) {
-          logAuditoria(row[1], 'LOGIN', 'Login realizado com sucesso');
+          logAuditoria(row[1], 'LOGIN', 'Login realizado com sucesso via WebApp');
           return {
             success: true,
             user: {
@@ -155,7 +175,7 @@ function login(matricula, senha) {
             }
           };
         } else {
-          return { success: false, message: 'Usuário inativo.' };
+          return { success: false, message: 'Usuário inativo no sistema.' };
         }
       }
     }
@@ -165,13 +185,13 @@ function login(matricula, senha) {
   }
 }
 
-// --- API DE DADOS (CRUD) ---
+// ================= API DE DADOS (CRUD GENÉRICO) =================
 
 function getDados(tabela) {
   try {
     const sheet = getSheet(tabela);
     const data = sheet.getDataRange().getValues();
-    if (data.length <= 1) return []; // Apenas cabeçalho ou vazio
+    if (data.length <= 1) return [];
     
     const headers = data[0];
     const rows = data.slice(1);
@@ -181,8 +201,8 @@ function getDados(tabela) {
       headers.forEach((h, i) => {
         obj[h] = row[i];
       });
-      obj._id = row[0]; // ID padrão primeira coluna
-      obj._rowIndex = index + 2; // Índice da linha na planilha (1-based + header)
+      obj._id = row[0];
+      obj._rowIndex = index + 2;
       return obj;
     });
   } catch (e) {
@@ -192,44 +212,35 @@ function getDados(tabela) {
 
 function salvarDados(tabela, dados) {
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(10000)) {
-    return { success: false, message: 'Sistema ocupado. Tente novamente.' };
+  if (!lock.tryLock(15000)) {
+    return { success: false, message: 'Sistema ocupado. Tente novamente em alguns segundos.' };
   }
   
   try {
     const sheet = getSheet(tabela);
     const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
     
-    // Se for novo registro (sem ID ou ID vazio)
-    if (!dados._id || dados._id === '') {
+    // INSERÇÃO
+    if (!dados._id || dados._id === '' || dados._id === null) {
       const newRow = headers.map(h => {
-        // Gera ID automático se for a coluna de ID
-        if (h.startsWith('ID_')) {
-           return tabela.substring(0,1).toUpperCase() + '-' + new Date().getTime().toString().slice(-6);
-        }
-        // Campos de data/hora automáticos
-        if (h === 'DataEntrada' || h === 'DataHora' || h === 'UltimaAtualizacao') {
-          return new Date();
-        }
-        if (h === 'Status' && tabela === CONFIG.SHEETS.LEITOS) {
-          return 'Livre';
-        }
-        if (h === 'Status' && tabela === CONFIG.SHEETS.PACIENTES) {
-          return 'Internado';
-        }
+        if (h.startsWith('ID_')) return gerarID(h.split('_')[1]);
+        if (['DataEntrada', 'DataHora', 'UltimaAtualizacao', 'Timestamp'].includes(h)) return new Date();
+        if (h === 'Status' && tabela === CONFIG.SHEETS.LEITOS) return 'Livre';
+        if (h === 'Status' && tabela === CONFIG.SHEETS.PACIENTES) return 'Internado';
+        if (h === 'Ativo' && tabela === CONFIG.SHEETS.USUARIOS) return 'TRUE';
         return dados[h] || '';
       });
       
       sheet.appendRow(newRow);
       logAuditoria(Session.getActiveUser().getEmail(), 'INSERT', `Novo registro em ${tabela}: ${newRow[0]}`);
-      return { success: true, message: 'Registro criado com sucesso!', id: newRow[0] };
+      return { success: true, message: 'Registro criado!', id: newRow[0] };
       
-    } else {
-      // Atualizar existente
+    } 
+    // ATUALIZAÇÃO
+    else {
       const data = sheet.getDataRange().getValues();
       let rowIndex = -1;
       
-      // Encontra linha pelo ID (primeira coluna)
       for (let i = 1; i < data.length; i++) {
         if (String(data[i][0]) === String(dados._id)) {
           rowIndex = i + 1;
@@ -240,14 +251,14 @@ function salvarDados(tabela, dados) {
       if (rowIndex > 0) {
         const newRow = headers.map(h => {
           if (h === 'UltimaAtualizacao') return new Date();
-          return dados[h] !== undefined ? dados[h] : '';
+          return dados.hasOwnProperty(h) ? dados[h] : data[rowIndex-1][headers.indexOf(h)];
         });
         
         sheet.getRange(rowIndex, 1, 1, newRow.length).setValues([newRow]);
-        logAuditoria(Session.getActiveUser().getEmail(), 'UPDATE', `Atualizado registro ${dados._id} em ${tabela}`);
-        return { success: true, message: 'Registro atualizado com sucesso!' };
+        logAuditoria(Session.getActiveUser().getEmail(), 'UPDATE', `Atualizado ${dados._id} em ${tabela}`);
+        return { success: true, message: 'Registro atualizado!' };
       } else {
-        return { success: false, message: 'Registro não encontrado para atualização.' };
+        return { success: false, message: 'Registro não encontrado.' };
       }
     }
   } catch (e) {
@@ -257,118 +268,190 @@ function salvarDados(tabela, dados) {
   }
 }
 
-function excluirDados(tabela, id) {
-  // Soft delete ou apenas log por segurança
-  logAuditoria(Session.getActiveUser().getEmail(), 'DELETE_REQUEST', `Tentativa de exclusão ID ${id} em ${tabela}`);
-  return { success: true, message: 'Solicitação registrada. Exclusão física desabilitada.' };
+// ================= REGRAS DE NEGÓCIO ESPECÍFICAS =================
+
+function getDashboardData() {
+  try {
+    const leitos = getDados(CONFIG.SHEETS.LEITOS);
+    const pacientes = getDados(CONFIG.SHEETS.PACIENTES);
+    const logs = getDados(CONFIG.SHEETS.LOGS);
+    
+    const total = leitos.length;
+    const ocupados = leitos.filter(l => l.Status === 'Ocupado').length;
+    const livres = total - ocupados;
+    
+    // Últimos 5 logs
+    const recentLogs = logs.slice(-5).reverse().map(l => ({
+      time: l.Timestamp instanceof Date ? l.Timestamp.toLocaleTimeString() : l.Timestamp,
+      user: l.Usuario,
+      action: l.Acao,
+      details: l.Detalhes
+    }));
+    
+    return {
+      success: true,
+      stats: { total, ocupados, livres, filaPA: 0 }, // Fila PA seria outra lógica
+      recentLogs: recentLogs
+    };
+  } catch (e) {
+    return { success: false, message: e.toString() };
+  }
 }
 
-// --- FUNÇÕES ESPECÍFICAS DO NEGÓCIO ---
-
-function getMapaLeitos() {
+function getMapaLeitosCompleto() {
   const leitos = getDados(CONFIG.SHEETS.LEITOS);
   const pacientes = getDados(CONFIG.SHEETS.PACIENTES);
   
   return leitos.map(leito => {
     const paciente = leito.PacienteID ? pacientes.find(p => String(p._id) === String(leito.PacienteID)) : null;
-    return {
-      ...leito,
-      pacienteInfo: paciente || null
-    };
+    return { ...leito, pacienteInfo: paciente };
   });
 }
 
-function realizarTransferencia(dados) {
-  // Dados esperados: { pacienteId, leitoOrigemId, leitoDestinoId, observacao }
+function realizarAdmissao(dadosPaciente, idLeito) {
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(10000)) return { success: false, message: 'Sistema ocupado.' };
+  if (!lock.tryLock(15000)) return { success: false, message: 'Sistema ocupado.' };
 
   try {
-    const user = Session.getActiveUser().getEmail();
-    const dataHora = new Date();
+    // 1. Verificar se leito está livre
+    const leitos = getDados(CONFIG.SHEETS.LEITOS);
+    const leito = leitos.find(l => String(l._id) === String(idLeito));
+    
+    if (!leito) return { success: false, message: 'Leito não encontrado.' };
+    if (leito.Status !== 'Livre') return { success: false, message: 'Leito já está ocupado.' };
 
-    // 1. Registrar Movimentação
-    const mov = {
-      _id: '',
-      DataHora: dataHora,
-      Tipo: 'TRANSFERENCIA',
-      PacienteID: dados.pacienteId,
-      Origem: dados.leitoOrigemId,
-      Destino: dados.leitoDestinoId,
-      Usuario: user,
-      Observacao: dados.observacao || ''
+    // 2. Criar Paciente
+    dadosPaciente.LeitoID = idLeito;
+    dadosPaciente.Status = 'Internado';
+    const resPaciente = salvarDados(CONFIG.SHEETS.PACIENTES, dadosPaciente);
+    
+    if (!resPaciente.success) throw new Error(resPaciente.message);
+    const pacienteId = resPaciente.id;
+
+    // 3. Ocupar Leito
+    leito.Status = 'Ocupado';
+    leito.PacienteID = pacienteId;
+    leito.UltimaAtualizacao = new Date();
+    // Remover _id gerado automaticamente se houver conflito na atualização
+    delete leito._id; 
+    // Precisamos passar o ID original para a função saber que é update
+    // A função salvarDados usa o campo _id do objeto passado.
+    // Vamos reconstruir o objeto garantindo o ID correto.
+    const leitoUpdate = {
+      _id: idLeito,
+      Nome: leito.Nome,
+      Setor: leito.Setor,
+      Tipo: leito.Tipo,
+      Status: 'Ocupado',
+      PacienteID: pacienteId,
+      UltimaAtualizacao: new Date()
     };
-    salvarDados(CONFIG.SHEETS.MOVIMENTACAO, mov);
+    
+    const resLeito = salvarDados(CONFIG.SHEETS.LEITOS, leitoUpdate);
+    if (!resLeito.success) throw new Error(resLeito.message);
 
-    // 2. Liberar Leito Origem
-    const leitoOrigem = getDados(CONFIG.SHEETS.LEITOS).find(l => String(l._id) === String(dados.leitoOrigemId));
-    if (leitoOrigem) {
-      leitoOrigem.Status = 'Livre';
-      leitoOrigem.PacienteID = '';
-      leitoOrigem.UltimaAtualizacao = dataHora;
-      salvarDados(CONFIG.SHEETS.LEITOS, leitoOrigem);
-    }
+    // 4. Log de Movimentação
+    salvarDados(CONFIG.SHEETS.MOVIMENTACAO, {
+      _id: '',
+      Tipo: 'ADMISSAO',
+      PacienteID: pacienteId,
+      Destino: idLeito,
+      Observacao: 'Admissão inicial'
+    });
 
-    // 3. Ocupar Leito Destino
-    const leitoDestino = getDados(CONFIG.SHEETS.LEITOS).find(l => String(l._id) === String(dados.leitoDestinoId));
-    if (leitoDestino) {
-      leitoDestino.Status = 'Ocupado';
-      leitoDestino.PacienteID = dados.pacienteId;
-      leitoDestino.UltimaAtualizacao = dataHora;
-      salvarDados(CONFIG.SHEETS.LEITOS, leitoDestino);
-    }
-
-    // 4. Atualizar Paciente
-    const pacientes = getDados(CONFIG.SHEETS.PACIENTES);
-    const paciente = pacientes.find(p => String(p._id) === String(dados.pacienteId));
-    if (paciente) {
-      paciente.LeitoID = dados.leitoDestinoId;
-      salvarDados(CONFIG.SHEETS.PACIENTES, paciente);
-    }
-
-    logAuditoria(user, 'TRANSFERENCIA', `Paciente ${dados.pacienteId} movido de ${dados.leitoOrigemId} para ${dados.leitoDestinoId}`);
-    return { success: true, message: 'Transferência realizada com sucesso!' };
+    logAuditoria(Session.getActiveUser().getEmail(), 'ADMISSAO', `Paciente ${pacienteId} admitido no leito ${idLeito}`);
+    
+    return { success: true, message: 'Paciente admitido com sucesso!' };
 
   } catch (e) {
-    return { success: false, message: 'Erro na transferência: ' + e.toString() };
+    return { success: false, message: 'Erro na admissão: ' + e.toString() };
   } finally {
     lock.releaseLock();
   }
 }
 
-function darAlta(pacienteId, observacao) {
+function realizarTransferencia(pacienteId, leitoOrigemId, leitoDestinoId, observacao) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) return { success: false, message: 'Sistema ocupado.' };
+
+  try {
+    const user = Session.getActiveUser().getEmail();
+    const now = new Date();
+
+    // Validar leito destino
+    const leitoDestinoRaw = getDados(CONFIG.SHEETS.LEITOS).find(l => String(l._id) === String(leitoDestinoId));
+    if (!leitoDestinoRaw || leitoDestinoRaw.Status !== 'Livre') {
+      return { success: false, message: 'Leito de destino indisponível.' };
+    }
+
+    // 1. Liberar Origem
+    const leitoOrigemUpdate = { _id: leitoOrigemId, Status: 'Livre', PacienteID: '' };
+    salvarDados(CONFIG.SHEETS.LEITOS, leitoOrigemUpdate);
+
+    // 2. Ocupar Destino
+    const leitoDestinoUpdate = { _id: leitoDestinoId, Status: 'Ocupado', PacienteID: pacienteId };
+    salvarDados(CONFIG.SHEETS.LEITOS, leitoDestinoUpdate);
+
+    // 3. Atualizar Paciente
+    const pacientes = getDados(CONFIG.SHEETS.PACIENTES);
+    const paciente = pacientes.find(p => String(p._id) === String(pacienteId));
+    if (paciente) {
+      salvarDados(CONFIG.SHEETS.PACIENTES, { _id: pacienteId, LeitoID: leitoDestinoId });
+    }
+
+    // 4. Log
+    salvarDados(CONFIG.SHEETS.MOVIMENTACAO, {
+      _id: '', DataHora: now, Tipo: 'TRANSFERENCIA',
+      PacienteID: pacienteId, Origem: leitoOrigemId, Destino: leitoDestinoId,
+      Usuario: user, Observacao: observacao
+    });
+
+    logAuditoria(user, 'TRANSFERENCIA', `${pacienteId}: ${leitoOrigemId} -> ${leitoDestinoId}`);
+    return { success: true, message: 'Transferência realizada!' };
+
+  } catch (e) {
+    return { success: false, message: 'Erro: ' + e.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function realizarAlta(pacienteId, tipo, observacao) {
   try {
     const pacientes = getDados(CONFIG.SHEETS.PACIENTES);
     const paciente = pacientes.find(p => String(p._id) === String(pacienteId));
     
-    if (!paciente) return { success: false, message: 'Paciente não encontrado' };
-    
-    // Atualiza Paciente
-    paciente.Status = 'ALTA';
-    paciente.Observacoes = (paciente.Observacoes || '') + ' | Alta em: ' + new Date() + '. Motivo: ' + observacao;
+    if (!paciente) return { success: false, message: 'Paciente não encontrado.' };
+
+    // Liberar leito se existir
     if (paciente.LeitoID) {
-       // Se tiver leito, libera ele também
-       const leitos = getDados(CONFIG.SHEETS.LEITOS);
-       const leito = leitos.find(l => String(l._id) === String(paciente.LeitoID));
-       if (leito) {
-         leito.Status = 'Livre';
-         leito.PacienteID = '';
-         leito.UltimaAtualizacao = new Date();
-         salvarDados(CONFIG.SHEETS.LEITOS, leito);
-       }
-       paciente.LeitoID = ''; // Desvincula leito
+      const leitoUpdate = { _id: paciente.LeitoID, Status: 'Livre', PacienteID: '' };
+      salvarDados(CONFIG.SHEETS.LEITOS, leitoUpdate);
     }
-    
-    const res = salvarDados(CONFIG.SHEETS.PACIENTES, paciente);
-    logAuditoria(Session.getActiveUser().getEmail(), 'ALTA', `Paciente ${paciente.Nome} recebeu alta`);
-    
-    return res;
+
+    // Atualizar Paciente
+    const statusFinal = tipo === 'OBITO' ? 'ÓBITO' : 'ALTA';
+    salvarDados(CONFIG.SHEETS.PACIENTES, {
+      _id: pacienteId,
+      Status: statusFinal,
+      Observacoes: (paciente.Observacoes || '') + `\n[${tipo}] ${new Date().toLocaleString()}: ${observacao}`
+    });
+
+    // Log
+    salvarDados(CONFIG.SHEETS.MOVIMENTACAO, {
+      _id: '', DataHora: new Date(), Tipo: tipo,
+      PacienteID: pacienteId, Observacao: observacao
+    });
+
+    logAuditoria(Session.getActiveUser().getEmail(), tipo, `Paciente ${paciente.Nome} (${pacienteId})`);
+    return { success: true, message: `${tipo} registrada com sucesso!` };
+
   } catch (e) {
-    return { success: false, message: 'Erro ao dar alta: ' + e.toString() };
+    return { success: false, message: 'Erro: ' + e.toString() };
   }
 }
 
-// Include handler para carregar CSS e JS separadamente no HTML
+// ================= UTILITÁRIO DE INCLUDE =================
 function include(filename) {
   return HtmlService.createHtmlOutputFromFile(filename).getContent();
 }
