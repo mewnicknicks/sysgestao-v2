@@ -1,0 +1,390 @@
+<script>
+/**
+ * SYSGESTAO v2.0 - Frontend Logic
+ * JavaScript ES6+ Puro
+ */
+
+// --- ESTADO GLOBAL DA APLICAÇÃO ---
+const AppState = {
+  user: null,
+  currentView: 'dashboard',
+  data: {
+    leitos: [],
+    pacientes: [],
+    logs: []
+  }
+};
+
+// --- INICIALIZAÇÃO ---
+document.addEventListener('DOMContentLoaded', () => {
+  updateDateDisplay();
+  // Verifica se há sessão salva (opcional, aqui faremos login sempre por segurança)
+});
+
+function updateDateDisplay() {
+  const now = new Date();
+  const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+  document.getElementById('current-date').textContent = now.toLocaleDateString('pt-BR', options);
+}
+
+// --- AUTENTICAÇÃO ---
+
+function handleLogin(e) {
+  e.preventDefault();
+  const matricula = document.getElementById('matricula').value;
+  const senha = document.getElementById('senha').value;
+  const btn = document.getElementById('btn-login');
+  const errorMsg = document.getElementById('login-error');
+
+  // UI Loading
+  btn.disabled = true;
+  btn.querySelector('.btn-text').textContent = 'Verificando...';
+  btn.querySelector('.loader').classList.remove('hidden');
+  errorMsg.classList.add('hidden');
+
+  // Chamada ao Backend (Code.gs)
+  google.script.run
+    .withSuccessHandler(onLoginSuccess)
+    .withFailureHandler(onLoginError)
+    .login(matricula, senha);
+}
+
+function onLoginSuccess(response) {
+  const btn = document.getElementById('btn-login');
+  btn.disabled = false;
+  btn.querySelector('.btn-text').textContent = 'Entrar no Sistema';
+  btn.querySelector('.loader').classList.add('hidden');
+
+  if (response.success) {
+    AppState.user = response.user;
+    initializeApp();
+  } else {
+    const errorMsg = document.getElementById('login-error');
+    errorMsg.textContent = response.message;
+    errorMsg.classList.remove('hidden');
+  }
+}
+
+function onLoginError(error) {
+  const btn = document.getElementById('btn-login');
+  btn.disabled = false;
+  btn.querySelector('.btn-text').textContent = 'Entrar no Sistema';
+  btn.querySelector('.loader').classList.add('hidden');
+  
+  document.getElementById('login-error').textContent = 'Erro de conexão: ' + error;
+  document.getElementById('login-error').classList.remove('hidden');
+}
+
+function logout() {
+  AppState.user = null;
+  document.getElementById('app-screen').classList.add('hidden');
+  document.getElementById('login-screen').classList.remove('hidden');
+  document.getElementById('login-form').reset();
+}
+
+// --- NAVEGAÇÃO E UI ---
+
+function initializeApp() {
+  // Troca de tela
+  document.getElementById('login-screen').classList.add('hidden');
+  document.getElementById('app-screen').classList.remove('hidden');
+  
+  // Atualiza info do usuário
+  document.getElementById('user-name-display').textContent = AppState.user.nome;
+  document.getElementById('user-role-display').textContent = AppState.user.perfil;
+  document.getElementById('user-avatar').textContent = AppState.user.nome.charAt(0).toUpperCase();
+
+  // Carrega dados iniciais
+  loadAllData();
+  
+  // Vai para dashboard
+  navigate('dashboard');
+}
+
+function navigate(viewName) {
+  AppState.currentView = viewName;
+  
+  // Atualiza Menu
+  document.querySelectorAll('.nav-item').forEach(el => {
+    el.classList.remove('active');
+    if(el.getAttribute('onclick').includes(viewName)) {
+      el.classList.add('active');
+    }
+  });
+
+  // Atualiza Título
+  const titles = {
+    'dashboard': 'Visão Geral',
+    'leitos': 'Mapa de Leitos',
+    'pacientes': 'Gestão de Pacientes',
+    'transferencias': 'Transferências',
+    'pa': 'Pronto Atendimento',
+    'altas': 'Altas e Óbitos',
+    'equipes': 'Equipes',
+    'config': 'Configurações'
+  };
+  document.getElementById('page-title').textContent = titles[viewName] || 'Sistema';
+
+  // Mostra/Esconde Views
+  document.querySelectorAll('.view-section').forEach(el => el.classList.add('hidden'));
+  const target = document.getElementById(`view-${viewName}`);
+  if(target) target.classList.remove('hidden');
+
+  // Recarrega dados específicos se necessário
+  if(viewName === 'leitos') renderLeitos();
+  if(viewName === 'pacientes') renderPacientes();
+  if(viewName === 'dashboard') renderDashboard();
+}
+
+function toggleTheme() {
+  document.body.classList.toggle('dark-theme');
+  const icon = document.getElementById('theme-icon');
+  if(document.body.classList.contains('dark-theme')) {
+    icon.textContent = 'light_mode';
+    localStorage.setItem('theme', 'dark');
+  } else {
+    icon.textContent = 'dark_mode';
+    localStorage.setItem('theme', 'light');
+  }
+}
+
+// --- LÓGICA DE DADOS E RENDERIZAÇÃO ---
+
+function loadAllData() {
+  // Busca Leitos e Pacientes simultaneamente (promessas simuladas com callbacks aninhados ou sequenciais)
+  // No GAS, chamadas são assíncronas.
+  
+  google.script.run.withSuccessHandler(data => {
+    AppState.data.leitos = data;
+    renderDashboard(); // Atualiza stats
+    if(AppState.currentView === 'leitos') renderLeitos();
+    updateLeitoSelect(); // Atualiza selects de modal
+  }).getMapaLeitos();
+
+  google.script.run.withSuccessHandler(data => {
+    AppState.data.pacientes = data;
+    if(AppState.currentView === 'pacientes') renderPacientes();
+  }).getDados('Pacientes');
+  
+  // Logs recentes para dashboard
+  google.script.run.withSuccessHandler(data => {
+    AppState.data.logs = data.slice(0, 5); // Pega apenas os 5 últimos
+    renderDashboardLogs();
+  }).getDados('Logs_Auditoria');
+}
+
+// Dashboard
+function renderDashboard() {
+  const total = AppState.data.leitos.length;
+  const ocupados = AppState.data.leitos.filter(l => l.PacienteID).length;
+  const livres = total - ocupados;
+  
+  // Animação simples de números
+  animateValue("stat-total-leitos", 0, total, 1000);
+  animateValue("stat-ocupados", 0, ocupados, 1000);
+  animateValue("stat-livres", 0, livres, 1000);
+  // Stat PA seria outro dado, simplificado aqui
+  document.getElementById("stat-pa").textContent = "0"; 
+}
+
+function renderDashboardLogs() {
+  const tbody = document.getElementById('dashboard-recent-logs');
+  tbody.innerHTML = '';
+  
+  if(!AppState.data.logs || AppState.data.logs.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" class="text-center">Nenhuma atividade recente</td></tr>';
+    return;
+  }
+
+  AppState.data.logs.forEach(log => {
+    const date = new Date(log.Timestamp);
+    const timeStr = date.toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'});
+    
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${timeStr}</td>
+      <td>${log.Detalhes ? log.Detalhes.substring(0, 20) + '...' : '-'}</td>
+      <td><span class="badge blue">${log.Acao}</span></td>
+      <td>${log.Usuario}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+// Leitos
+function renderLeitos() {
+  const grid = document.getElementById('leitos-grid');
+  grid.innerHTML = '';
+  
+  AppState.data.leitos.forEach(leito => {
+    const isOccupied = !!leito.PacienteID;
+    const card = document.createElement('div');
+    card.className = `card leito-card ${isOccupied ? 'occupied' : 'free'}`;
+    
+    const pacienteNome = leito.pacienteInfo ? leito.pacienteInfo.Nome : 'Livre';
+    const pacienteInfo = leito.pacienteInfo ? 
+      `<div class="patient-mini"><span class="material-icons-round">person</span> ${pacienteNome}</div>` : 
+      '<div class="status-text">Disponível</div>';
+
+    card.innerHTML = `
+      <div class="card-header">
+        <span class="badge ${leito.Setor === 'UTI' ? 'red' : 'blue'}">${leito.Setor}</span>
+        <h3>${leito.Nome}</h3>
+      </div>
+      <div class="card-body">
+        ${pacienteInfo}
+        <div class="meta-info">
+          <span><span class="material-icons-round">bed</span> ${leito.Tipo}</span>
+        </div>
+      </div>
+      <div class="card-actions">
+        ${isOccupied ? 
+          `<button class="btn btn-sm btn-secondary" onclick="verPaciente('${leito.PacienteID}')">Ver</button>` : 
+          `<button class="btn btn-sm btn-primary" onclick="admitirNoLeito('${leito._id}')">Admitir</button>`
+        }
+      </div>
+    `;
+    grid.appendChild(card);
+  });
+}
+
+// Pacientes
+function renderPacientes() {
+  const tbody = document.getElementById('tabela-pacientes');
+  tbody.innerHTML = '';
+  
+  AppState.data.pacientes.forEach(p => {
+    if(p.Status === 'ALTA') return; // Ignora altas na lista principal
+    
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><strong>${p.Nome}</strong></td>
+      <td>${calcularIdade(p.DataNascimento)} / ${p.Genero}</td>
+      <td>${p.Convenio}</td>
+      <td>${p.LeitoAtual || 'Sem leito'}</td>
+      <td><span class="badge green">${p.Status}</span></td>
+      <td>
+        <button class="btn-icon btn-sm" title="Editar"><span class="material-icons-round">edit</span></button>
+        <button class="btn-icon btn-sm text-red" title="Alta"><span class="material-icons-round">assignment_turned_in</span></button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+// Utilitários
+function animateValue(id, start, end, duration) {
+  const obj = document.getElementById(id);
+  let startTimestamp = null;
+  const step = (timestamp) => {
+    if (!startTimestamp) startTimestamp = timestamp;
+    const progress = Math.min((timestamp - startTimestamp) / duration, 1);
+    obj.innerHTML = Math.floor(progress * (end - start) + start);
+    if (progress < 1) {
+      window.requestAnimationFrame(step);
+    }
+  };
+  window.requestAnimationFrame(step);
+}
+
+function calcularIdade(dataNasc) {
+  if(!dataNasc) return '?';
+  const hoje = new Date();
+  const nasc = new Date(dataNasc);
+  let idade = hoje.getFullYear() - nasc.getFullYear();
+  const m = hoje.getMonth() - nasc.getMonth();
+  if (m < 0 || (m === 0 && hoje.getDate() < nasc.getDate())) {
+    idade--;
+  }
+  return idade;
+}
+
+// Modais
+function openModal(modalId) {
+  document.getElementById('modal-backdrop').classList.remove('hidden');
+  document.getElementById(modalId).classList.remove('hidden');
+  
+  if(modalId === 'modal-paciente') {
+    updateLeitoSelect();
+  }
+}
+
+function closeAllModals() {
+  document.getElementById('modal-backdrop').classList.add('hidden');
+  document.querySelectorAll('.modal').forEach(m => m.classList.add('hidden'));
+}
+
+function updateLeitoSelect() {
+  const select = document.getElementById('paciente-leito');
+  select.innerHTML = '<option value="">Selecione um leito livre...</option>';
+  
+  const livres = AppState.data.leitos.filter(l => !l.PacienteID);
+  livres.forEach(l => {
+    const opt = document.createElement('option');
+    opt.value = l._id;
+    opt.textContent = `${l.Nome} (${l.Setor})`;
+    select.appendChild(opt);
+  });
+}
+
+// Ações de Formulário
+function saveLeito(e) {
+  e.preventDefault();
+  const dados = {
+    _id: document.getElementById('leito-id').value,
+    Nome: document.getElementById('leito-nome').value,
+    Setor: document.getElementById('leito-setor').value,
+    Tipo: document.getElementById('leito-tipo').value,
+    Status: 'Livre'
+  };
+  
+  showToast('Salvando...', 'info');
+  
+  google.script.run
+    .withSuccessHandler(res => {
+      showToast(res.message, res.success ? 'success' : 'error');
+      closeAllModals();
+      loadAllData();
+    })
+    .salvarDados('Leitos', dados);
+}
+
+function savePaciente(e) {
+  e.preventDefault();
+  const dados = {
+    Nome: document.getElementById('paciente-nome').value,
+    DataNascimento: document.getElementById('paciente-nasc').value,
+    Genero: document.getElementById('paciente-genero').value,
+    Convenio: document.getElementById('paciente-convenio').value,
+    Status: 'INTERNADO',
+    DataEntrada: new Date()
+    // Aqui precisaria da lógica de vincular ao leito selecionado
+  };
+  
+  showToast('Admitindo paciente...', 'info');
+  
+  google.script.run
+    .withSuccessHandler(res => {
+      showToast(res.message, res.success ? 'success' : 'error');
+      closeAllModals();
+      loadAllData();
+    })
+    .salvarDados('Pacientes', dados);
+}
+
+function showToast(msg, type = 'info') {
+  const toast = document.getElementById('toast');
+  const icon = document.getElementById('toast-icon');
+  const text = document.getElementById('toast-message');
+  
+  text.textContent = msg;
+  icon.textContent = type === 'success' ? 'check_circle' : (type === 'error' ? 'error' : 'info');
+  
+  toast.className = `toast ${type} show`;
+  
+  setTimeout(() => {
+    toast.classList.remove('show');
+  }, 3000);
+}
+
+</script>
