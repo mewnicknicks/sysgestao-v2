@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SYSGESTAO v2.0</title>
+  
+  <!-- Importação de Ícones (Google Fonts) -->
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Inclusão dos Estilos (O conteúdo do styles.html será injetado aqui pelo GAS) -->
+  <?!= include('styles'); ?>
+</head>
+<body>
+
+  <!-- ================= TELA DE LOGIN ================= -->
+  <div id="login-screen" class="app-container">
+    <div class="login-box">
+      <div class="login-header">
+        <span class="material-icons-round logo-icon">local_hospital</span>
+        <h1>SYSGESTAO <span class="version-tag">v2.0</span></h1>
+        <p>Gestão Hospitalar Integrada</p>
+      </div>
+      
+      <form id="login-form" onsubmit="handleLogin(event)">
+        <div class="form-group">
+          <label for="matricula">Matrícula</label>
+          <div class="input-wrapper">
+            <span class="material-icons-round">badge</span>
+            <input type="text" id="matricula" name="matricula" required placeholder="Ex: 12345">
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <label for="senha">Senha</label>
+          <div class="input-wrapper">
+            <span class="material-icons-round">lock</span>
+            <input type="password" id="senha" name="senha" required placeholder="••••••">
+          </div>
+        </div>
+
+        <button type="submit" id="btn-login" class="btn btn-primary btn-block">
+          <span class="btn-text">Entrar no Sistema</span>
+          <span class="loader hidden"></span>
+        </button>
+        
+        <div id="login-error" class="error-msg hidden"></div>
+      </form>
+      
+      <div class="login-footer">
+        <p>&copy; 2024 SysGestao Hospitalar</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= SISTEMA PRINCIPAL ================= -->
+  <div id="app-screen" class="app-layout hidden">
+    
+    <!-- Sidebar / Menu Lateral -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <span class="material-icons-round">local_hospital</span>
+        <span class="brand-name">SYSGESTAO</span>
+      </div>
+      
+      <nav class="nav-menu">
+        <button class="nav-item active" onclick="navigate('dashboard')">
+          <span class="material-icons-round">dashboard</span>
+          <span>Visão Geral</span>
+        </button>
+        <button class="nav-item" onclick="navigate('leitos')">
+          <span class="material-icons-round">bed</span>
+          <span>Mapa de Leitos</span>
+        </button>
+        <button class="nav-item" onclick="navigate('pacientes')">
+          <span class="material-icons-round">people</span>
+          <span>Pacientes</span>
+        </button>
+        <button class="nav-item" onclick="navigate('transferencias')">
+          <span class="material-icons-round">swap_horiz</span>
+          <span>Transferências</span>
+        </button>
+        <button class="nav-item" onclick="navigate('pa')">
+          <span class="material-icons-round">emergency</span>
+          <span>Pronto Atendimento</span>
+        </button>
+        <button class="nav-item" onclick="navigate('altas')">
+          <span class="material-icons-round">assignment_turned_in</span>
+          <span>Altas e Óbitos</span>
+        </button>
+        <div class="nav-divider"></div>
+        <button class="nav-item" onclick="navigate('equipes')">
+          <span class="material-icons-round">groups</span>
+          <span>Equipes</span>
+        </button>
+        <button class="nav-item" onclick="navigate('config')">
+          <span class="material-icons-round">settings</span>
+          <span>Configurações</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="user-info">
+          <div class="avatar-circle" id="user-avatar">A</div>
+          <div class="user-details">
+            <span id="user-name-display">Usuário</span>
+            <span id="user-role-display" class="role-badge">Admin</span>
+          </div>
+        </div>
+        <button class="btn-icon" onclick="logout()" title="Sair">
+          <span class="material-icons-round">logout</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- Área de Conteúdo Principal -->
+    <main class="main-content">
+      <header class="top-bar">
+        <h2 id="page-title">Visão Geral</h2>
+        <div class="top-actions">
+          <span id="current-date" class="date-display"></span>
+          <button class="btn-icon theme-toggle" onclick="toggleTheme()" title="Alternar Tema">
+            <span class="material-icons-round" id="theme-icon">dark_mode</span>
+          </button>
+        </div>
+      </header>
+
+      <div id="content-area" class="content-scroll">
+        <!-- O conteúdo dinâmico será injetado aqui pelo JavaScript -->
+        
+        <!-- Exemplo: Dashboard View (Inicial) -->
+        <div id="view-dashboard" class="view-section">
+          <div class="stats-grid">
+            <div class="stat-card blue">
+              <div class="stat-icon"><span class="material-icons-round">bed</span></div>
+              <div class="stat-info">
+                <h3 id="stat-total-leitos">0</h3>
+                <p>Total de Leitos</p>
+              </div>
+            </div>
+            <div class="stat-card green">
+              <div class="stat-icon"><span class="material-icons-round">check_circle</span></div>
+              <div class="stat-info">
+                <h3 id="stat-ocupados">0</h3>
+                <p>Ocupados</p>
+              </div>
+            </div>
+            <div class="stat-card orange">
+              <div class="stat-icon"><span class="material-icons-round">hourglass_empty</span></div>
+              <div class="stat-info">
+                <h3 id="stat-livres">0</h3>
+                <p>Livres</p>
+              </div>
+            </div>
+            <div class="stat-card red">
+              <div class="stat-icon"><span class="material-icons-round">warning</span></div>
+              <div class="stat-info">
+                <h3 id="stat-pa">0</h3>
+                <p>Aguardando PA</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="recent-activity">
+            <h3>Atividade Recente</h3>
+            <div class="table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Hora</th>
+                    <th>Paciente</th>
+                    <th>Ação</th>
+                    <th>Responsável</th>
+                  </tr>
+                </thead>
+                <tbody id="dashboard-recent-logs">
+                  <tr><td colspan="4" class="text-center">Carregando...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- View: Mapa de Leitos -->
+        <div id="view-leitos" class="view-section hidden">
+          <div class="action-bar">
+            <div class="search-box">
+              <span class="material-icons-round">search</span>
+              <input type="text" placeholder="Buscar leito ou paciente..." onkeyup="filterLeitos(this.value)">
+            </div>
+            <button class="btn btn-primary" onclick="openModal('modal-leito')">
+              <span class="material-icons-round">add</span> Novo Leito
+            </button>
+          </div>
+          <div id="leitos-grid" class="cards-grid">
+            <!-- Cards de leitos gerados via JS -->
+          </div>
+        </div>
+
+        <!-- View: Pacientes -->
+        <div id="view-pacientes" class="view-section hidden">
+          <div class="action-bar">
+             <button class="btn btn-primary" onclick="openModal('modal-paciente')">
+              <span class="material-icons-round">person_add</span> Admitir Paciente
+            </button>
+          </div>
+          <div class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Nome</th>
+                  <th>Idade/Sexo</th>
+                  <th>Convênio</th>
+                  <th>Leito/Setor</th>
+                  <th>Status</th>
+                  <th>Ações</th>
+                </tr>
+              </thead>
+              <tbody id="tabela-pacientes">
+                <!-- Preenchido via JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+        <!-- Placeholder para outras views (serão implementadas conforme necessidade) -->
+        <div id="view-transferencias" class="view-section hidden"><h3>Módulo de Transferências</h3><p>Em desenvolvimento...</p></div>
+        <div id="view-pa" class="view-section hidden"><h3>Pronto Atendimento</h3><p>Em desenvolvimento...</p></div>
+        <div id="view-altas" class="view-section hidden"><h3>Altas e Óbitos</h3><p>Em desenvolvimento...</p></div>
+        <div id="view-equipes" class="view-section hidden"><h3>Gestão de Equipes</h3><p>Em desenvolvimento...</p></div>
+        <div id="view-config" class="view-section hidden"><h3>Configurações</h3><p>Em desenvolvimento...</p></div>
+
+      </div>
+    </main>
+  </div>
+
+  <!-- ================= MODAIS ================= -->
+  
+  <!-- Modal Genérico de Fundo -->
+  <div id="modal-backdrop" class="modal-backdrop hidden" onclick="closeAllModals()"></div>
+
+  <!-- Modal Adicionar/Editar Leito -->
+  <div id="modal-leito" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Gerenciar Leito</h3>
+        <button class="btn-icon" onclick="closeAllModals()"><span class="material-icons-round">close</span></button>
+      </div>
+      <form id="form-leito" onsubmit="saveLeito(event)">
+        <input type="hidden" id="leito-id">
+        <div class="form-group">
+          <label>Nome/Número do Leito</label>
+          <input type="text" id="leito-nome" required>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Setor</label>
+            <select id="leito-setor" required>
+              <option value="UTI">UTI</option>
+              <option value="Enfermaria">Enfermaria</option>
+              <option value="Isolamento">Isolamento</option>
+              <option value="Obstetrícia">Obstetrícia</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Tipo</label>
+            <select id="leito-tipo">
+              <option value="Adulto">Adulto</option>
+              <option value="Pediátrico">Pediátrico</option>
+              <option value="Berço">Berço</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeAllModals()">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Salvar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal Admitir Paciente -->
+  <div id="modal-paciente" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Admitir Paciente</h3>
+        <button class="btn-icon" onclick="closeAllModals()"><span class="material-icons-round">close</span></button>
+      </div>
+      <form id="form-paciente" onsubmit="savePaciente(event)">
+        <div class="form-group">
+          <label>Nome Completo</label>
+          <input type="text" id="paciente-nome" required>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Data Nascimento</label>
+            <input type="date" id="paciente-nasc" required>
+          </div>
+          <div class="form-group">
+            <label>Gênero</label>
+            <select id="paciente-genero">
+              <option value="M">Masculino</option>
+              <option value="F">Feminino</option>
+              <option value="O">Outro</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Convênio</label>
+          <input type="text" id="paciente-convenio" placeholder="Ex: SUS, Unimed, Bradesco">
+        </div>
+        <div class="form-group">
+          <label>Leito Inicial</label>
+          <select id="paciente-leito" required>
+            <option value="">Selecione um leito livre...</option>
+            <!-- Preenchido via JS -->
+          </select>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeAllModals()">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Admitir</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="toast hidden">
+    <span class="material-icons-round" id="toast-icon">info</span>
+    <span id="toast-message">Mensagem aqui</span>
+  </div>
+
+  <!-- Inclusão do Script Principal (O conteúdo do app.js será injetado aqui) -->
+  <?!= include('app'); ?>
+
+</body>
+</html>
