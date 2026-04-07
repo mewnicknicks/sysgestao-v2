@@ -1,0 +1,117 @@
+
+<script>
+  (function() {
+    window.App = window.App || {};
+    
+    window.App.Constants = {
+        // --- LIMITES E PAGINAÇÃO ---
+        LIMITS: {
+            MAX_LOGS_AUDIT: 200,
+            MAX_PATIENTS_LIST: 500
+        },
+
+        // --- TEMPORIZADORES (ms) ---
+        TIMERS: {
+            CACHE_TTL: 30000,
+            CAROUSEL_SPEED: 8000,
+            CAROUSEL_MANUAL_OVERRIDE: 20000,
+            TOAST_DURATION: 3000
+        },
+
+        // --- TAGS DE IDENTIFICAÇÃO ---
+        TAGS: {
+            INTENSIVE_CARE: ['CTI', 'UTI', 'CETIPE', 'INTENSIVA']
+        },
+
+        BED_TYPES: {
+            CTI: 'CTI',
+            UTI: 'UTI',
+            CETIPE: 'CETIPE',
+            INTENSIVA: 'INTENSIVA',
+            UI: 'UI'
+        },
+
+        FLOW_ORIGINS: {
+            BLOCO: 'BLOCO',
+            HDM: 'HDM',
+            AMB: 'AMB',
+            EXTERNO: 'EXTERNO',
+            TRANSFER_FLOW: 'TRANSFER_FLOW'
+        },
+
+        BED_STATUS: {
+            AVAILABLE: 'AVAILABLE',
+            OCCUPIED: 'OCCUPIED',
+            CLEANING: 'CLEANING',
+            MAINTENANCE: 'MAINTENANCE',
+            RESERVED: 'RESERVED'
+        },
+        
+        DISCHARGE_REASONS: {
+            HOME: 'ALTA_CASA',
+            INTERNAL: 'ALTA_UI',
+            DEATH: 'OBITO'
+        },
+        
+        DISCHARGE_STATUS: {
+            YES: 'SIM',
+            NO: 'NAO',
+            ALTA: 'ALTA',
+            OBITO: 'OBITO'
+        },
+        
+        DISCHARGE_RELEASED: {
+            YES: 'SIM',
+            NO: 'NAO'
+        },
+
+        FLOW_TYPES: {
+            ENTRY: 'ENTRADA',
+            EXIT: 'SAIDA'
+        },
+
+        TRANSFER_STATUS: {
+            ACCEPTED: 'ACEITO',
+            REJECTED: 'RECUSADO',
+            WAITING: 'AGUARDANDO',
+            CANCELLED: 'CANCELADO'
+        },
+
+        // Mapeamento visual para Badges e Labels
+        LABELS: {
+            'AVAILABLE': 'Vago',
+            'OCCUPIED': 'Ocupado',
+            'CLEANING': 'Higienização',
+            'MAINTENANCE': 'Bloqueado',
+            'RESERVED': 'Reservado',
+            'ALTA_CASA': 'Alta Externa',
+            'ALTA_UI': 'Transferência Interna',
+            'OBITO': 'Óbito'
+        },
+
+        // Dados de Relatório (Populados dinamicamente pelo backend via DIM_DICIONARIOS)
+        REPORT_CTI_DOCTORS: [
+            { cti: 'CTI 1', doc: 'Dr. Plantonista A', cod: '0001', crm: 'MG 12345' },
+            { cti: 'CTI 2', doc: 'Dra. Plantonista B', cod: '0002', crm: 'MG 67890' },
+            { cti: 'CTI 3', doc: 'Dr. Plantonista C', cod: '0003', crm: 'MG 11223' },
+            { cti: 'CTI 4', doc: 'Dra. Plantonista D', cod: '0004', crm: 'MG 44556' },
+            { cti: 'CTI 5', doc: 'Dr. Plantonista E', cod: '0005', crm: 'MG 77889' },
+            { cti: 'CTI 6', doc: 'Dra. Plantonista F', cod: '0006', crm: 'MG 99001' },
+            { cti: 'CTI 7', doc: 'Dr. Plantonista G', cod: '0007', crm: 'MG 22334' },
+            { cti: 'CTI 8', doc: 'Dra. Plantonista H', cod: '0008', crm: 'MG 55667' },
+            { cti: 'CTI 9', doc: 'Dr. Plantonista I', cod: '0009', crm: 'MG 88990' },
+            { cti: 'CTI 10', doc: 'Dra. Plantonista J', cod: '0010', crm: 'MG 11223' }
+        ],
+        
+        // Configurações de Paginação de Relatórios
+        REPORT_ROTATION_SLOTS_PER_PAGE: 12,
+        REPORT_ROTATION_TOTAL_PAGES: 20,
+        REPORT_CENSUS_LINES_PER_PAGE: 28,
+        REPORT_ABSENCE_ROWS: 18,
+
+        // Convênios Estratégicos para Dashboard
+        STRATEGIC_INSURANCES: ['BRADESCO', 'AMIL', 'CASSI', 'PARTICULAR'],
+        STANDARD_INSURANCES: ['UNIMED', 'SUS', 'OUTROS']
+    };
+  })();
+</script>

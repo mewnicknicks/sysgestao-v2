@@ -1,0 +1,552 @@
+
+<script>
+  (function() {
+    window.App = window.App || {};
+
+    var generateId = function() { return 'page-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9); };
+
+    // --- COMPONENTE DE PÁGINA ---
+    var Page = React.forwardRef(function(props, ref) {
+        var id = props.id;
+        var pageNumber = props.pageNumber;
+        var totalPages = props.totalPages;
+        var docType = props.docType;
+        var layoutMode = props.layoutMode;
+        var onContentOverflow = props.onContentOverflow;
+        var onContentUnderflow = props.onContentUnderflow;
+        var onFocus = props.onFocus;
+        var metaData = props.metaData;
+        var setMetaData = props.setMetaData;
+        var user = props.user;
+
+        // Configuração Dinâmica
+        var isOfficial = docType === 'OFFICIAL';
+        var isFirstPage = pageNumber === 1;
+        var isLastPage = pageNumber === totalPages;
+
+        var handleInput = function(e) {
+            var el = e.currentTarget;
+            // Tolerância de 1px
+            if (el.scrollHeight > el.clientHeight + 1) {
+                onContentOverflow(id, el);
+            }
+        };
+
+        var handleKeyDown = function(e) {
+            if (e.key === 'Backspace' && pageNumber > 1) {
+                var sel = window.getSelection();
+                if (sel.anchorOffset === 0 && e.currentTarget.innerText.trim() === '') {
+                    e.preventDefault();
+                    onContentUnderflow(id);
+                }
+            }
+        };
+
+        return React.createElement('div', {
+            className: 'paper-page bg-[var(--nx-bg-paper)] shadow-2xl flex flex-col shrink-0 relative mb-8 print:mb-0 print:shadow-none print:break-after-page transition-transform duration-200 ease-out origin-top',
+            onClick: function() { if(ref.current) ref.current.focus(); }
+        },
+            // PADRONIZAÇÃO DE CABEÇALHO (IGUAL RELATÓRIOS/RODÍZIO)
+            React.createElement('div', { className: 'page-header' },
+                React.createElement('div', { className: 'header-logo-area' },
+                    window.HospitalLogo
+                        ? React.createElement(window.HospitalLogo, { className: 'h-full w-auto max-h-[25mm] object-contain brightness-0' })
+                        : React.createElement('div', { className: 'flex items-center gap-3 opacity-80' },
+                            React.createElement('i', { className: 'ph-bold ph-hospital text-4xl text-[var(--nx-text-primary)]' }),
+                            React.createElement('span', { className: 'text-xl font-black tracking-widest text-[var(--nx-text-primary)] uppercase' }, 'HOSPITAL')
+                        )
+                ),
+                React.createElement('div', { className: 'header-info-area' },
+                    isOfficial
+                        ? React.createElement(React.Fragment, null,
+                            React.createElement('h2', { className: 'font-black text-2xl uppercase tracking-widest leading-none text-black' }, 'MEMORANDO'),
+                            React.createElement('span', { className: 'text-[10px] font-bold uppercase text-gray-500 mt-1 tracking-[0.2em]' }, 'DOCUMENTO INTERNO')
+                        )
+                        : React.createElement('div', { className: 'flex flex-col items-end w-full' },
+                            React.createElement('input', {
+                                type: 'text',
+                                value: metaData.title || 'FORMULÁRIO LIVRE',
+                                onChange: function(e) { setMetaData(Object.assign({}, metaData, { title: e.target.value.toUpperCase() })); },
+                                className: 'font-black text-xl uppercase tracking-widest leading-none text-[var(--nx-text-primary)] text-right outline-none bg-transparent border-b border-transparent hover:border-slate-300 focus:border-[var(--nx-text-primary)] transition-colors w-full placeholder-slate-400',
+                                placeholder: 'TÍTULO DO DOCUMENTO'
+                            }),
+                            React.createElement('span', { className: 'text-[10px] font-bold uppercase text-gray-500 mt-1 tracking-widest' }, 'EMISSÃO: ' + new Date().toLocaleDateString())
+                        )
+                )
+            ),
+
+            React.createElement('div', { className: 'page-body flex flex-col' },
+                // METADATA BLOCK (OFFICIAL - FIRST PAGE)
+                isOfficial && isFirstPage && React.createElement('div', { className: 'mb-6 bg-slate-50 border border-slate-300 p-3 shrink-0 text-xs shadow-sm' },
+                    React.createElement('div', { className: 'grid grid-cols-[60px_1fr] gap-2 items-center mb-1' },
+                        React.createElement('span', { className: 'font-black uppercase text-right text-slate-700' }, 'DE:'),
+                        React.createElement('input', { type: 'text', className: 'bg-transparent border-b border-slate-300 w-full outline-none font-bold uppercase text-slate-900 focus:border-black transition-colors', placeholder: 'SEU NOME / SETOR', value: metaData.from, onChange: function(e) { setMetaData(Object.assign({}, metaData, { from: e.target.value })); } })
+                    ),
+                    React.createElement('div', { className: 'grid grid-cols-[60px_1fr] gap-2 items-center mb-1' },
+                        React.createElement('span', { className: 'font-black uppercase text-right text-slate-700' }, 'PARA:'),
+                        React.createElement('input', { type: 'text', className: 'bg-transparent border-b border-slate-300 w-full outline-none font-bold uppercase text-slate-900 focus:border-black transition-colors', placeholder: 'DESTINATÁRIO', value: metaData.to, onChange: function(e) { setMetaData(Object.assign({}, metaData, { to: e.target.value })); } })
+                    ),
+                    React.createElement('div', { className: 'grid grid-cols-[60px_1fr] gap-2 items-center' },
+                        React.createElement('span', { className: 'font-black uppercase text-right text-slate-700' }, 'ASSUNTO:'),
+                        React.createElement('input', { type: 'text', className: 'bg-transparent border-b border-slate-300 w-full outline-none font-bold uppercase text-slate-900 focus:border-black transition-colors', placeholder: 'TEMA DO DOCUMENTO', value: metaData.subject, onChange: function(e) { setMetaData(Object.assign({}, metaData, { subject: e.target.value })); } })
+                    )
+                ),
+
+                // EDITOR BODY
+                React.createElement('div', {
+                    ref: ref,
+                    contentEditable: true,
+                    suppressContentEditableWarning: true,
+                    onInput: handleInput,
+                    onKeyDown: handleKeyDown,
+                    onFocus: function() { onFocus(id); },
+                    className: 'flex-1 outline-none text-justify font-serif text-[12pt] leading-[1.5] text-[var(--nx-text-primary)] overflow-hidden whitespace-pre-wrap break-words ' + (layoutMode === 'COL2' ? 'editor-cols-2' : '')
+                }),
+
+                // SIGNATURE BLOCK (OFFICIAL - LAST PAGE)
+                isOfficial && isLastPage && React.createElement('div', { className: 'mt-auto pt-10 pb-2 flex flex-col items-center justify-center shrink-0' },
+                    React.createElement('div', { className: 'w-1/2 border-t-2 border-black mb-2' }),
+                    React.createElement('span', { className: 'text-sm font-black uppercase text-black' }, user ? user.name : 'USUÁRIO DO SISTEMA'),
+                    React.createElement('span', { className: 'text-[10px] font-bold uppercase text-slate-600' },
+                        user ? (user.role || 'MÉDICO / GESTOR') : '',
+                        ' ',
+                        user && user.matricula ? '\u2022 ' + user.matricula : ''
+                    )
+                )
+            ),
+
+            // FOOTER PADRONIZADO
+            React.createElement('div', { className: 'page-footer' },
+                React.createElement('span', { className: 'footer-text' }, 'Documento gerado eletronicamente por SysGestão Enterprise v8'),
+                React.createElement('span', { className: 'footer-text' }, 'Pág. ' + pageNumber + ' / ' + totalPages)
+            )
+        );
+    });
+
+    var DocumentEditor = function(props) {
+        var user = props.user;
+        var UI = window.App.UI || {};
+
+        var pagesState = React.useState([{ id: generateId() }]);
+        var pages = pagesState[0];
+        var setPages = pagesState[1];
+
+        var zoomState = React.useState(1.0);
+        var zoom = zoomState[0];
+        var setZoom = zoomState[1];
+
+        // STATE DE DOCUMENTO
+        var docTypeState = React.useState('OFFICIAL');
+        var docType = docTypeState[0];
+        var setDocType = docTypeState[1];
+
+        var layoutModeState = React.useState('COL1');
+        var layoutMode = layoutModeState[0];
+        var setLayoutMode = layoutModeState[1];
+
+        var metaDataState = React.useState({ from: user ? user.name : '', to: '', subject: '', title: 'FORMULÁRIO LIVRE' });
+        var metaData = metaDataState[0];
+        var setMetaData = metaDataState[1];
+
+        // STATE DE IA
+        var isAiLoadingState = React.useState(false);
+        var isAiLoading = isAiLoadingState[0];
+        var setIsAiLoading = isAiLoadingState[1];
+
+        var pageRefs = React.useRef({});
+
+        // --- LÓGICA DE SPLIT GRANULAR (WORD-BY-WORD) ---
+        var handleOverflow = function(pageId, element) {
+            var pageIndex = pages.findIndex(function(p) { return p.id === pageId; });
+            if (pageIndex === -1) return;
+
+            var limit = element.clientHeight;
+            var nodesToMove = [];
+
+            var safetyCounter = 0;
+            var MAX_ITERATIONS = 3000;
+
+            while (element.scrollHeight > limit && element.lastChild && safetyCounter < MAX_ITERATIONS) {
+                safetyCounter++;
+                var last = element.lastChild;
+
+                if (last.nodeType === 3) {
+                    var text = last.nodeValue;
+                    var lastSpace = text.lastIndexOf(' ');
+                    if (lastSpace > -1) {
+                        last.nodeValue = text.substring(0, lastSpace);
+                        var newNode = document.createTextNode(text.substring(lastSpace));
+                        if (nodesToMove.length > 0 && nodesToMove[0].nodeType === 3) {
+                            nodesToMove[0].nodeValue = newNode.nodeValue + nodesToMove[0].nodeValue;
+                        } else {
+                            nodesToMove.unshift(newNode);
+                        }
+                    } else {
+                        nodesToMove.unshift(last);
+                        element.removeChild(last);
+                    }
+                }
+                else if (last.nodeType === 1) {
+                    if (last.tagName === 'BR') {
+                        nodesToMove.unshift(last);
+                        element.removeChild(last);
+                    }
+                    else if (last.childNodes.length > 0) {
+                        var container;
+                        if (nodesToMove.length > 0 && nodesToMove[0].nodeName === last.nodeName) {
+                            container = nodesToMove[0];
+                        } else {
+                            container = last.cloneNode(false);
+                            nodesToMove.unshift(container);
+                        }
+                        var innerLast = last.lastChild;
+                        if (container.firstChild) container.insertBefore(innerLast, container.firstChild);
+                        else container.appendChild(innerLast);
+
+                        if (last.childNodes.length === 0) {
+                            element.removeChild(last);
+                        }
+                    } else {
+                        nodesToMove.unshift(last);
+                        element.removeChild(last);
+                    }
+                }
+            }
+
+            if (nodesToMove.length > 0) {
+                var nextPageExists = pageIndex + 1 < pages.length;
+                var nextId;
+                if (nextPageExists) nextId = pages[pageIndex + 1].id;
+                else { nextId = generateId(); setPages(function(prev) { return prev.concat([{ id: nextId }]); }); }
+
+                setTimeout(function() {
+                    var nextEditor = pageRefs.current[nextId];
+                    if (nextEditor) {
+                        if (nextEditor.firstChild) {
+                            var fragment = document.createDocumentFragment();
+                            nodesToMove.forEach(function(node) { fragment.appendChild(node); });
+                            nextEditor.insertBefore(fragment, nextEditor.firstChild);
+                        } else {
+                            nodesToMove.forEach(function(node) { nextEditor.appendChild(node); });
+                        }
+                        if (nextEditor.scrollHeight > nextEditor.clientHeight + 2) {
+                            handleOverflow(nextId, nextEditor);
+                        }
+                    }
+                }, 0);
+            }
+        };
+
+        var handleUnderflow = function(pageId) {
+            var pageIndex = pages.findIndex(function(p) { return p.id === pageId; });
+            if (pageIndex > 0) {
+                var prevId = pages[pageIndex - 1].id;
+                setPages(function(prev) { return prev.filter(function(p) { return p.id !== pageId; }); });
+                setTimeout(function() {
+                    var prevEditor = pageRefs.current[prevId];
+                    if (prevEditor) {
+                        prevEditor.focus();
+                        var range = document.createRange();
+                        range.selectNodeContents(prevEditor);
+                        range.collapse(false);
+                        var sel = window.getSelection();
+                        sel.removeAllRanges();
+                        sel.addRange(range);
+                    }
+                }, 0);
+            }
+        };
+
+        var execCmd = function(cmd, val) {
+            // NOTA DE AVALIAÇÃO (A11Y/TECH DEBT):
+            // document.execCommand está depreciado nos padrões web, mas ainda é a única forma nativa
+            // de formatar contentEditable sem reescrever o DOM manualmente.
+            // A substituição por bibliotecas modernas (Quill, Slate) foi avaliada, mas quebraria
+            // o motor de paginação customizado (handleOverflow) que depende da estrutura DOM bruta.
+            // Mantido por estabilidade na versão atual.
+            document.execCommand(cmd, false, val || null);
+        };
+
+        var insertTable = function() {
+            var tableHTML = '<table class="editor-table" style="width:100%; border-collapse:collapse; margin-bottom:1rem;"><tbody><tr><td style="border:1px solid black; padding:4px;">Célula 1</td><td style="border:1px solid black; padding:4px;">Célula 2</td><td style="border:1px solid black; padding:4px;">Célula 3</td></tr><tr><td style="border:1px solid black; padding:4px;">Célula 4</td><td style="border:1px solid black; padding:4px;">Célula 5</td><td style="border:1px solid black; padding:4px;">Célula 6</td></tr><tr><td style="border:1px solid black; padding:4px;">Célula 7</td><td style="border:1px solid black; padding:4px;">Célula 8</td><td style="border:1px solid black; padding:4px;">Célula 9</td></tr></tbody></table><p><br></p>';
+            execCmd('insertHTML', tableHTML);
+        };
+
+        var mergeCells = function() {
+            var sel = window.getSelection();
+            if (!sel.rangeCount) return;
+            var node = sel.anchorNode;
+            while (node && node.nodeName !== 'TD') node = node.parentNode;
+            if (node && node.nodeName === 'TD') {
+                var nextTd = node.nextElementSibling;
+                if (nextTd && nextTd.nodeName === 'TD') {
+                    var colspanCurrent = parseInt(node.getAttribute('colspan') || 1);
+                    var colspanNext = parseInt(nextTd.getAttribute('colspan') || 1);
+                    node.setAttribute('colspan', colspanCurrent + colspanNext);
+                    node.innerHTML += " " + nextTd.innerHTML;
+                    nextTd.remove();
+                }
+            }
+        };
+
+        var splitCells = function() {
+            var sel = window.getSelection();
+            if (!sel.rangeCount) return;
+            var node = sel.anchorNode;
+            while (node && node.nodeName !== 'TD') node = node.parentNode;
+            if (node && node.nodeName === 'TD') {
+                var colspan = parseInt(node.getAttribute('colspan') || 1);
+                if (colspan > 1) {
+                    node.setAttribute('colspan', 1);
+                    for (var i = 1; i < colspan; i++) {
+                        var newTd = document.createElement('td');
+                        newTd.innerHTML = "&nbsp;";
+                        newTd.style.border = "1px solid black";
+                        newTd.style.padding = "4px";
+                        node.parentNode.insertBefore(newTd, node.nextSibling);
+                    }
+                }
+            }
+        };
+
+        // --- AI LOGIC: SELECTION & RANGE API (MODERNIZADO) ---
+        var handleAiImprovement = async function() {
+            var selection = window.getSelection();
+
+            // Valida se há seleção
+            if (!selection || selection.rangeCount === 0 || selection.toString().trim() === '') {
+                if (window.App.UI.Toast) window.App.UI.Toast.show("Selecione o texto que deseja corrigir.", "warning");
+                return;
+            }
+
+            // 1. Captura e Marcador
+            var range = selection.getRangeAt(0);
+            var selectedText = range.toString();
+
+            // Cria marcador visual
+            var markerId = 'ai-marker-' + Date.now();
+            var marker = document.createElement('span');
+            marker.id = markerId;
+            marker.textContent = selectedText;
+            // Estilo visual de "Processando"
+            marker.style.backgroundColor = 'rgba(99, 102, 241, 0.2)';
+            marker.style.borderBottom = '2px solid #6366f1';
+            marker.style.color = '#312e81';
+            marker.contentEditable = "false"; // Protege durante o loading
+
+            // Substitui texto pelo marcador
+            range.deleteContents();
+            range.insertNode(marker);
+            selection.removeAllRanges();
+
+            setIsAiLoading(true);
+            try {
+                // CHAMA O BACKEND COM CONTEXTO 'DOC_EDITOR' (Prompt no DB)
+                var response = await window.App.Service.callGeminiAi(selectedText, 'DOC_EDITOR');
+
+                var markerEl = document.getElementById(markerId);
+                if (markerEl) {
+                    if (response && !response.startsWith("Erro")) {
+                        var newText = response.trim();
+                        var textNode = document.createTextNode(newText);
+
+                        // Substitui marcador pelo texto novo
+                        markerEl.parentNode.replaceChild(textNode, markerEl);
+
+                        // Normaliza (une nós de texto vizinhos)
+                        if (textNode.parentNode) textNode.parentNode.normalize();
+
+                        if (window.App.UI.Toast) window.App.UI.Toast.show("Texto revisado com sucesso.", "success");
+                    } else {
+                        throw new Error(response || "Falha na IA");
+                    }
+                }
+
+            } catch (e) {
+                console.error("AI Error:", e);
+                // Rollback: Restaura o texto original se der erro
+                var markerEl2 = document.getElementById(markerId);
+                if (markerEl2) {
+                    var originalNode = document.createTextNode(selectedText);
+                    markerEl2.parentNode.replaceChild(originalNode, markerEl2);
+                    if (originalNode.parentNode) originalNode.parentNode.normalize();
+                }
+
+                var errorMsg = e.message && e.message.includes("Tempo limite")
+                    ? "A IA demorou muito. Tente um texto menor."
+                    : "Erro ao processar IA. Tente novamente.";
+
+                if (window.App.UI.Toast) window.App.UI.Toast.show(errorMsg, "error");
+            } finally {
+                setIsAiLoading(false);
+            }
+        };
+
+        return React.createElement('div', { className: 'flex h-full bg-transparent font-sans overflow-hidden relative px-10 pt-5 pb-0 gap-6' },
+
+            // BARRA DE FERRAMENTAS ESQUERDA (DENTRO DE BOX ESTILO RELATÓRIOS)
+            React.createElement('div', { className: 'w-96 flex flex-col shrink-0 z-30 print-hidden h-full pb-5' },
+
+                React.createElement(UI.Card, { className: 'p-6 flex flex-col gap-4 h-full overflow-y-auto custom-scrollbar' },
+
+                    // HEADER DA BARRA + ZOOM
+                    React.createElement('div', { className: 'flex items-center justify-between border-b border-slate-700/50 pb-4 mb-2 shrink-0' },
+                        React.createElement('div', { className: 'flex items-center gap-2 text-cyan-400' },
+                            React.createElement('i', { className: 'ph-bold ph-pencil-simple-line text-xl' }),
+                            React.createElement('span', { className: 'text-xs font-black uppercase tracking-widest' }, 'Editor')
+                        ),
+                        React.createElement('div', { className: 'flex bg-slate-900 rounded-lg p-0.5 border border-slate-700' },
+                            React.createElement('button', { onClick: function() { setZoom(function(z) { return Math.max(0.4, z - 0.1); }); }, className: 'w-6 h-6 flex items-center justify-center text-slate-400 hover:text-white rounded hover:bg-slate-800' }, React.createElement('i', { className: 'ph-bold ph-minus text-xs' })),
+                            React.createElement('span', { className: 'w-8 flex items-center justify-center text-[9px] font-mono font-bold text-white' }, Math.round(zoom * 100) + '%'),
+                            React.createElement('button', { onClick: function() { setZoom(function(z) { return Math.min(1.5, z + 0.1); }); }, className: 'w-6 h-6 flex items-center justify-center text-slate-400 hover:text-white rounded hover:bg-slate-800' }, React.createElement('i', { className: 'ph-bold ph-plus text-xs' }))
+                        )
+                    ),
+
+                    // MAIN TOOLS (3 Columns)
+                    React.createElement('div', { className: 'grid grid-cols-3 gap-2 w-full content-start' },
+                        React.createElement('button', { onClick: function() { setDocType('OFFICIAL'); }, className: 'tool-btn ' + (docType === 'OFFICIAL' ? 'active' : '') },
+                            React.createElement('i', { className: 'ph-bold ph-seal-check tool-icon' }),
+                            React.createElement('span', { className: 'tool-label' }, 'Oficial')
+                        ),
+                        React.createElement('button', { onClick: function() { setDocType('FREE'); }, className: 'tool-btn ' + (docType === 'FREE' ? 'active' : '') },
+                            React.createElement('i', { className: 'ph-bold ph-file-text tool-icon' }),
+                            React.createElement('span', { className: 'tool-label' }, 'Livre')
+                        ),
+                        React.createElement('button', { onClick: function() { window.print(); }, className: 'tool-btn bg-emerald-900/30 text-emerald-400 border-emerald-500/30 hover:bg-emerald-600 hover:text-white' },
+                            React.createElement('i', { className: 'ph-bold ph-printer tool-icon' }),
+                            React.createElement('span', { className: 'tool-label' }, 'Print')
+                        ),
+
+                        React.createElement('div', { className: 'col-span-3 h-px bg-slate-700/50 my-1' }),
+
+                        React.createElement('button', { onClick: function() { execCmd('bold'); }, className: 'tool-btn' },
+                            React.createElement('i', { className: 'ph-bold ph-text-b tool-icon' }),
+                            React.createElement('span', { className: 'tool-label' }, 'Bold')
+                        ),
+                        React.createElement('button', { onClick: function() { execCmd('italic'); }, className: 'tool-btn' },
+                            React.createElement('i', { className: 'ph-bold ph-text-italic tool-icon' }),
+                            React.createElement('span', { className: 'tool-label' }, 'Italic')
+                        ),
+                        React.createElement('button', { onClick: function() { execCmd('underline'); }, className: 'tool-btn' },
+                            React.createElement('i', { className: 'ph-bold ph-text-underline tool-icon' }),
+                            React.createElement('span', { className: 'tool-label' }, 'Under')
+                        ),
+
+                        React.createElement('button', { onClick: function() { execCmd('justifyLeft'); }, className: 'tool-btn' },
+                            React.createElement('i', { className: 'ph-bold ph-text-align-left tool-icon' }),
+                            React.createElement('span', { className: 'tool-label' }, 'Esq')
+                        ),
+                        React.createElement('button', { onClick: function() { execCmd('justifyCenter'); }, className: 'tool-btn' },
+                            React.createElement('i', { className: 'ph-bold ph-text-align-center tool-icon' }),
+                            React.createElement('span', { className: 'tool-label' }, 'Centro')
+                        ),
+                        React.createElement('button', { onClick: function() { execCmd('justifyFull'); }, className: 'tool-btn' },
+                            React.createElement('i', { className: 'ph-bold ph-text-align-justify tool-icon' }),
+                            React.createElement('span', { className: 'tool-label' }, 'Justif.')
+                        ),
+
+                        React.createElement('button', { onClick: function() { execCmd('insertUnorderedList'); }, className: 'tool-btn' },
+                            React.createElement('i', { className: 'ph-bold ph-list-bullets tool-icon' }),
+                            React.createElement('span', { className: 'tool-label' }, 'Lista')
+                        ),
+                        React.createElement('button', { onClick: function() { execCmd('insertOrderedList'); }, className: 'tool-btn' },
+                            React.createElement('i', { className: 'ph-bold ph-list-numbers tool-icon' }),
+                            React.createElement('span', { className: 'tool-label' }, 'Num.')
+                        ),
+                        React.createElement('button', { onClick: function() { setLayoutMode(function(prev) { return prev === 'COL1' ? 'COL2' : 'COL1'; }); }, className: 'tool-btn ' + (layoutMode === 'COL2' ? 'active' : '') },
+                            React.createElement('i', { className: 'ph-bold ph-columns tool-icon' }),
+                            React.createElement('span', { className: 'tool-label' }, 'Cols')
+                        ),
+
+                        React.createElement('div', { className: 'col-span-3 h-px bg-slate-700/50 my-1' }),
+
+                        React.createElement('button', { onClick: insertTable, className: 'tool-btn' },
+                            React.createElement('i', { className: 'ph-bold ph-table tool-icon' }),
+                            React.createElement('span', { className: 'tool-label' }, 'Table')
+                        ),
+                        React.createElement('button', { onClick: mergeCells, className: 'tool-btn' },
+                            React.createElement('i', { className: 'ph-bold ph-arrows-in-line-horizontal tool-icon' }),
+                            React.createElement('span', { className: 'tool-label' }, 'Mesclar')
+                        ),
+                        React.createElement('button', { onClick: splitCells, className: 'tool-btn' },
+                            React.createElement('i', { className: 'ph-bold ph-arrows-out-line-horizontal tool-icon' }),
+                            React.createElement('span', { className: 'tool-label' }, 'Dividir')
+                        ),
+
+                        React.createElement('div', { className: 'col-span-3 h-px bg-slate-700/50 my-1' }),
+
+                        React.createElement('button', { onClick: function() { execCmd('undo'); }, className: 'tool-btn' },
+                            React.createElement('i', { className: 'ph-bold ph-arrow-u-up-left tool-icon' }),
+                            React.createElement('span', { className: 'tool-label' }, 'Undo')
+                        ),
+                        React.createElement('button', { onClick: function() { execCmd('redo'); }, className: 'tool-btn' },
+                            React.createElement('i', { className: 'ph-bold ph-arrow-u-up-right tool-icon' }),
+                            React.createElement('span', { className: 'tool-label' }, 'Redo')
+                        ),
+                        React.createElement('button', {
+                            onClick: async function() { var ok = await UI.confirmThen("Limpar tudo?"); if (ok) setPages([{ id: generateId() }]); },
+                            className: 'tool-btn text-rose-400 hover:bg-rose-600 hover:text-white border-rose-900/30'
+                        },
+                            React.createElement('i', { className: 'ph-bold ph-trash tool-icon' }),
+                            React.createElement('span', { className: 'tool-label' }, 'Limpar')
+                        ),
+
+                        // --- BOTÃO DE IA ADD (MODIFICADO: SLIM & FULL WIDTH) ---
+                        React.createElement('button', {
+                            onClick: handleAiImprovement,
+                            disabled: isAiLoading,
+                            className: 'tool-btn col-span-3 !h-10 !flex-row gap-2 relative overflow-hidden group/ai ' + (isAiLoading ? 'cursor-wait opacity-80' : 'hover:bg-indigo-600 hover:border-indigo-500 hover:text-white border-indigo-400/30 text-indigo-300 bg-indigo-600/10')
+                        },
+                            isAiLoading
+                                ? React.createElement(React.Fragment, null,
+                                    React.createElement('i', { className: 'ph-bold ph-circle-notch animate-spin text-lg text-indigo-400' }),
+                                    React.createElement('span', { className: 'tool-label text-indigo-300' }, 'Corrigindo...')
+                                )
+                                : React.createElement(React.Fragment, null,
+                                    React.createElement('div', { className: 'absolute inset-0 bg-indigo-500/10 opacity-0 group-hover/ai:opacity-100 transition-opacity' }),
+                                    React.createElement('i', { className: 'ph-bold ph-magic-wand text-lg animate-pulse' }),
+                                    React.createElement('span', { className: 'tool-label' }, 'IA Corrigir')
+                                )
+                        )
+                    )
+                )
+            ),
+
+            // ÁREA PRINCIPAL (TRANSPARENTE PARA O FUNDO FLUTUANTE)
+            React.createElement('div', { className: 'flex-1 overflow-auto custom-scrollbar relative flex flex-col items-center py-[10px] bg-transparent print:p-0 print:overflow-visible' },
+                React.createElement('div', { className: 'flex flex-col items-center transition-transform duration-200 origin-top print:transform-none min-h-full', style: { transform: 'scale(' + zoom + ')' } },
+                    pages.map(function(page, index) {
+                        return React.createElement(Page, {
+                            key: page.id,
+                            id: page.id,
+                            pageNumber: index + 1,
+                            totalPages: pages.length,
+                            docType: docType,
+                            layoutMode: layoutMode,
+                            metaData: metaData,
+                            setMetaData: setMetaData,
+                            user: user,
+                            onContentOverflow: handleOverflow,
+                            onContentUnderflow: handleUnderflow,
+                            onFocus: function(id) { },
+                            ref: function(el) { pageRefs.current[page.id] = el; }
+                        });
+                    }),
+
+                    React.createElement('div', { className: 'print-hidden h-20 flex items-center justify-center w-full opacity-0 hover:opacity-100 transition-opacity mt-4 mb-20' },
+                        React.createElement('button', {
+                            onClick: function() { setPages(function(p) { return p.concat([{ id: generateId() }]); }); },
+                            className: 'flex items-center gap-2 px-4 py-2 bg-slate-800 text-slate-400 rounded-full shadow-lg hover:text-white hover:scale-105 transition-all'
+                        },
+                            React.createElement('i', { className: 'ph-bold ph-plus-circle text-xl' }),
+                            React.createElement('span', { className: 'text-xs font-bold uppercase tracking-widest' }, 'Nova Página')
+                        )
+                    )
+                )
+            )
+        );
+    };
+
+    window.App.DocumentEditor = DocumentEditor;
+  })();
+</script>

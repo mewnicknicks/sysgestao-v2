@@ -1,0 +1,402 @@
+
+<script>
+  (function() {
+    window.App = window.App || {};
+    
+    // Dependência: Utils (para normalize e safeInt)
+    // Garante que o Utils esteja carregado ou usa fallback local
+    const normalize = (str) => window.App.Utils ? window.App.Utils.normalize(str) : String(str || '').toUpperCase().trim();
+    const safeInt = (val) => window.App.Utils ? window.App.Utils.safeInt(val) : (parseInt(val, 10) || 0);
+
+    window.App.Intelligence = {
+        
+        /**
+         * Funções utilitárias para testes e cálculos isolados
+         */
+        calculateOccupancyRate: (occupied, capacity) => {
+            if (!capacity || capacity <= 0) return 0;
+            return Math.round((occupied / capacity) * 100);
+        },
+
+        calculateAverageStay: (patients) => {
+            if (!patients || patients.length === 0) return 0;
+            const now = new Date();
+            const totalDays = patients.reduce((acc, p) => {
+                const admission = new Date(p.admissionDate || p.date || p.createdAt);
+                if (isNaN(admission.getTime())) return acc;
+                const diff = now - admission;
+                return acc + (diff / (1000 * 60 * 60 * 24));
+            }, 0);
+            return Math.round(totalDays / patients.length);
+        },
+
+        /**
+         * Processa o estado completo do hospital (Core Engine V8)
+         * Esta função é o coração do dashboard, unificando dados de leitos, pacientes e bloqueios.
+         */
+        processHospitalState: (appData, simulation = {}) => {
+            if (!appData || !appData.structure) return null;
+            
+            const { structure } = appData;
+            const patients = appData.patients || appData.patientsList || [];
+            const blockedBeds = appData.blockedBeds || appData.blockedBedsList || [];
+            const paList = appData.paList || [];
+            const transfers = appData.transfers || appData.transferList || [];
+            const discharges = appData.discharges || appData.dischargeList || [];
+            const forecast = appData.forecast || appData.preloadedForecast || {};
+
+            try {
+                const { sectors = [], classes = [], flows = [] } = structure;
+                const now = new Date();
+                const todayISO = now.toISOString().split('T')[0];
+
+                // --- 1. ESTRUTURA BASE ---
+                const stats = {
+                  // Adicionado macroUi e macroCti para contagem real de capacidade agregada
+                  totals: { capacity: 0, occupied: 0, blocked: 0, free: 0, macroUi: 0, macroCti: 0 },
+                  classes: {}, 
+                  sectors: {}, 
+                  indicators: { occupancyRate: 0, paWaiting: paList.length, avgPaTime: "0h 0m" },
+                  simulationActive: false,
+                  gaps: { ui: 0, cti: 0 } 
+                };
+
+                const strategicInsurances = window.App.Constants.STRATEGIC_INSURANCES || [];
+                const standardInsurances = window.App.Constants.STANDARD_INSURANCES || [];
+                let strategicCount = 0;
+                let standardCount = 0;
+                const insuranceMap = {}; // Para gráfico de convênios
+
+                // Inicializa Classes (ex: UI, CTI, PED) com estrutura completa
+                classes.forEach(c => {
+                  stats.classes[c.id] = {
+                    id: c.id, label: c.label, color: c.color, order: c.order,
+                    capacity: 0, occupied: 0, blocked: 0, free: 0,
+                    forecastDischarge: 0, forecastAdmission: 0, 
+                    balance: 0, divergence: 0
+                  };
+                });
+
+                // Inicializa Setores (ex: 4ºI, CTI A)
+                sectors.forEach(s => {
+                  const sName = normalize(s.name);
+                  stats.sectors[sName] = {
+                    id: sName, 
+                    label: s.name, 
+                    name: s.name, // CORREÇÃO CRÍTICA: Garante que 'name' existe para evitar crash no GlobalScenario
+                    type: s.type, 
+                    order: s.order,
+                    capacity: 0, occupied: 0, blocked: 0, free: 0, simulated: 0, divergence: 0
+                  };
+                });
+
+                // --- 2. INDEXAÇÃO (MAPS) ---
+                // Cria mapas de busca rápida para performance
+                const occupiedBeds = new Set();
+                patients.forEach(p => {
+                   // Status válido de ocupação (ignora altas já efetivadas e óbitos)
+                   const dischargeStatus = String(p.dischargeStatus || window.App.Constants.DISCHARGE_RELEASED.NO).toUpperCase();
+                   if (p.bed && ![window.App.Constants.DISCHARGE_STATUS.ALTA, window.App.Constants.DISCHARGE_STATUS.OBITO].includes(dischargeStatus)) {
+                     occupiedBeds.add(normalize(p.bed));
+                     // Contagem de Convênios (Apenas internados)
+                     const ins = p.insurance || 'OUTROS';
+                     insuranceMap[ins] = (insuranceMap[ins] || 0) + 1;
+                     
+                     if (strategicInsurances.includes(ins.toUpperCase())) {
+                         strategicCount++;
+                     } else {
+                         standardCount++;
+                     }
+                   }
+                });
+
+                stats.insuranceCounts = { strategic: strategicCount, standard: standardCount };
+
+                const blockedMap = new Set();
+                blockedBeds.forEach(b => blockedMap.add(normalize(b.bed)));
+
+                // --- 3. PROCESSAMENTO DE LEITOS FÍSICOS ---
+                if (structure.beds) {
+                    structure.beds.forEach(bed => {
+                       const bedNum = normalize(bed.number);
+                       const sName = normalize(bed.sector);
+                       
+                       // Fallback: Cria setor on-the-fly se não existir no metadata (Segurança)
+                       if (!stats.sectors[sName]) {
+                           stats.sectors[sName] = { 
+                               id: sName, 
+                               label: bed.sector, 
+                               name: bed.sector, // Fallback name
+                               type: bed.type || 'UI', 
+                               capacity: 0, occupied: 0, blocked: 0, free: 0, divergence: 0 
+                           };
+                       }
+                       
+                       const type = bed.type || 'UI';
+                       // Fallback: Cria classe on-the-fly se necessário
+                       if (!stats.classes[type]) {
+                           stats.classes[type] = { id: type, label: type, color: 'slate', capacity: 0, occupied: 0, blocked: 0, free: 0, divergence: 0, balance: 0 };
+                       }
+                       
+                       // Incrementa Capacidade Total e Específica
+                       stats.sectors[sName].capacity++;
+                       stats.classes[type].capacity++; 
+                       stats.totals.capacity++;
+
+                       // Contagem Macro (UI vs CTI) para Fallback de Forecast
+                       const typeNorm = normalize(type);
+                       if (['CTI','UTI','CETIPE'].some(k => typeNorm.includes(k))) {
+                           stats.totals.macroCti++;
+                       } else {
+                           stats.totals.macroUi++;
+                       }
+
+                       // Verifica Status e Incrementa Contadores
+                       if (blockedMap.has(bedNum)) {
+                         stats.sectors[sName].blocked++;
+                         stats.classes[type].blocked++; 
+                         stats.totals.blocked++;
+                       } else if (occupiedBeds.has(bedNum)) {
+                         stats.sectors[sName].occupied++;
+                         stats.classes[type].occupied++; 
+                         stats.totals.occupied++;
+                       }
+                       // O cálculo de vagas livres (Free) é feito abaixo considerando simulação
+                    });
+                }
+
+                // --- 4. SIMULAÇÃO E CÁLCULO DE VAGAS ---
+                // Aplica regras de simulação se o usuário tiver alterado algo no Forecast
+                Object.values(stats.sectors).forEach(sector => {
+                   // Valor simulado pode vir por ID ou Label
+                   let simValue = simulation[sector.id] ?? simulation[sector.label] ?? simulation[sector.label ? sector.label.toUpperCase() : ''];
+                   const hasSimVal = (simValue !== undefined && simValue !== "" && simValue !== null);
+                   
+                   if (hasSimVal) stats.simulationActive = true;
+
+                   const effectiveOccupied = hasSimVal ? parseInt(simValue) : sector.occupied;
+                   sector.simulated = effectiveOccupied;
+                   
+                   // Vagos = Capacidade - (Ocupados Reais ou Simulados) - Bloqueados
+                   sector.free = Math.max(0, sector.capacity - effectiveOccupied - sector.blocked);
+
+                   // Divergência = Real - Simulado
+                   // Se Real 8 e Simulado 10 -> -2 (Faltam 2 pacientes / Saldo Devedor)
+                   const divergence = sector.occupied - effectiveOccupied;
+                   sector.divergence = divergence;
+
+                   // Propaga para a Classe (Macro)
+                   if (stats.classes[sector.type]) {
+                      stats.classes[sector.type].free += sector.free;
+                      stats.classes[sector.type].divergence += divergence;
+                   }
+                });
+                
+                // --- 5. FORECAST E RESERVAS ---
+                const currentForecast = forecast.forecast || {}; 
+                const reserves = forecast.reserves || {}; 
+
+                // Altas Previstas (Forecast) - Mapeia forecast do banco para os setores
+                Object.entries(currentForecast).forEach(([sectorId, val]) => {
+                   const sector = Object.values(stats.sectors).find(s => s.id === normalize(sectorId));
+                   if (sector && stats.classes[sector.type]) {
+                      stats.classes[sector.type].forecastDischarge += safeInt(val);
+                   }
+                });
+
+                // Admissões Previstas (Reservas) - Baseado nos fluxos de entrada
+                flows.forEach(flow => {
+                   const val = safeInt(reserves[flow.id]);
+                   const flowType = flow.type || 'UI';
+                   if (stats.classes[flowType]) {
+                      stats.classes[flowType].forecastAdmission += val;
+                   }
+                });
+
+                // Saldo Final = (Vagos + Altas) - Admissões
+                Object.values(stats.classes).forEach(cls => {
+                   cls.balance = (cls.free + cls.forecastDischarge) - (cls.forecastAdmission || 0);
+                });
+
+                // --- 6. INDICADORES GERAIS ---
+                stats.indicators.occupancyRate = stats.totals.capacity > 0 
+                   ? Math.round((stats.totals.occupied / stats.totals.capacity) * 100) 
+                   : 0;
+                
+                // CÁLCULO AGREGADO DE GAPS (UI vs CTI)
+                const isCtiClass = (id) => window.App.Constants.TAGS.INTENSIVE_CARE.some(k => String(id).toUpperCase().includes(k));
+                Object.values(stats.classes).forEach(cls => {
+                    // Mantém o sinal original: Real - Simulado
+                    // Ex: Real 8, Sim 10 -> -2 (Devedor)
+                    const gap = cls.divergence || 0; 
+                    if (isCtiClass(cls.id)) stats.gaps.cti += gap;
+                    else stats.gaps.ui += gap;
+                });
+
+                // --- 7. ANÁLISE DE FLUXOS (INFLOW/OUTFLOW) ---
+                const inflow = {
+                    pa: { count: paList.length, label: "Fila P.A.", avgTime: "0h 0m", criticalCount: 0, criticalNames: [] },
+                    surgical: { count: 0, label: "Adm. Bloco", ui: 0, cti: 0 },
+                    hdm: { count: 0, label: "Adm. HDM", ui: 0, cti: 0 },
+                    ambulatory: { count: 0, label: "Amb. Externo", ui: 0, cti: 0 }, 
+                    transfer: { count: 0, label: "Transferências" }, 
+                };
+
+                // Análise Detalhada do PA (Tempo Médio e Críticos)
+                let totalPaMins = 0;
+                paList.forEach(p => {
+                    // Contagem de convênios do PA também
+                    const ins = p.insurance || 'OUTROS';
+                    insuranceMap[ins] = (insuranceMap[ins] || 0) + 1;
+
+                    if (window.App.Utils && window.App.Utils.getDurationInfo) {
+                        const { diffMins } = window.App.Utils.getDurationInfo(p, now);
+                        if (diffMins > 0) totalPaMins += diffMins;
+                        if (diffMins > 720) { // > 12h
+                            inflow.pa.criticalCount++;
+                            const name = (p.patient || p.name || 'S/N').split(' ')[0];
+                            inflow.pa.criticalNames.push(name.toUpperCase());
+                        }
+                    }
+                });
+                if (paList.length > 0) {
+                    const avg = totalPaMins / paList.length;
+                    const h = Math.floor(avg / 60);
+                    const m = Math.floor(avg % 60);
+                    inflow.pa.avgTime = `${h}h ${m}m`;
+                }
+
+                // Análise Fluxos (Structure Flows + Forecast Reserves)
+                flows.forEach(flow => {
+                    const id = (flow.id || '').toLowerCase();
+                    const label = (flow.label || '').toUpperCase();
+                    const val = parseInt(reserves[flow.id] || 0, 10);
+                    
+                    if (val > 0) {
+                        const type = (flow.type || '').toUpperCase();
+                        const isCti = type.includes('CTI');
+                        
+                        if (id.includes('cc_') || label.includes('BLOCO')) {
+                            inflow.surgical.count += val;
+                            if (isCti) inflow.surgical.cti += val; else inflow.surgical.ui += val;
+                        } else if (id.includes('hdm_') || label.includes('HDM')) {
+                            inflow.hdm.count += val;
+                            if (isCti) inflow.hdm.cti += val; else inflow.hdm.ui += val;
+                        } else if (label.includes('AMB') || label.includes('EXTERNO')) {
+                            inflow.ambulatory.count += val;
+                            if (isCti) inflow.ambulatory.cti += val; else inflow.ambulatory.ui += val;
+                        }
+                    }
+                });
+
+                // Transferências Pendentes (Incoming)
+                transfers.forEach(t => {
+                    if (t.flow === window.App.Constants.FLOW_TYPES.ENTRY && t.status === window.App.Constants.TRANSFER_STATUS.ACCEPTED && !t.arrived) {
+                        const origin = (t.origin || '').toUpperCase();
+                        if (!origin.includes(window.App.Constants.FLOW_ORIGINS.BLOCO) && !origin.includes(window.App.Constants.FLOW_ORIGINS.HDM)) {
+                            inflow.transfer.count++;
+                        }
+                    }
+                });
+
+                // Outflows (Saídas Hoje)
+                const dischargesToday = discharges.filter(d => (d.date || '').startsWith(todayISO));
+                const deaths = dischargesToday.filter(d => d.reason === 'OBITO').length;
+                const dischargesUI = dischargesToday.filter(d => d.reason !== 'OBITO').length; // Simplificado
+                
+                let forecastTotal = 0;
+                Object.values(currentForecast).forEach(val => forecastTotal += safeInt(val));
+
+                const outflows = {
+                    discharges: dischargesToday.length,
+                    deaths: deaths,
+                    dischargesUI: dischargesUI,
+                    forecastTotal: forecastTotal,
+                    turnoverGap: dischargesToday.length - forecastTotal
+                };
+
+                // --- 8. TURNOVER & BALANÇO (NOVO V8.9) ---
+                // Consolida dados para o módulo Forecast que estava recebendo zero
+                
+                // 1. Backlog (Fila de Espera Real)
+                // Soma PA + Transferências Pendentes de Entrada
+                let pendingTransfersCount = 0;
+                transfers.forEach(t => {
+                    if (t.flow === 'ENTRADA' && t.status === 'ACEITO' && !t.arrived) {
+                        const origin = (t.origin || '').toUpperCase();
+                        // Filtra o que já foi contabilizado em cirurgias/hdm se necessário, 
+                        // mas por segurança vamos contar tudo que é transferência externa aceita
+                        pendingTransfersCount++;
+                    }
+                });
+
+                const backlogTotal = paList.length + pendingTransfersCount;
+
+                // 2. Ocupação Simulada Total
+                let totalSimulatedOccupied = 0;
+                Object.values(stats.sectors).forEach(s => {
+                    totalSimulatedOccupied += (s.simulated !== undefined ? s.simulated : s.occupied);
+                });
+
+                // 3. Saldos (Capacidade - Ocupação - Bloqueios - Backlog)
+                // Free Real já foi calculado em stats.totals (mas precisamos recalcular o free global corretamente)
+                
+                // Recalcula Free Global Real
+                let totalFreeReal = 0;
+                let totalFreeSimulated = 0;
+                
+                Object.values(stats.sectors).forEach(s => {
+                    totalFreeReal += Math.max(0, s.capacity - s.occupied - s.blocked);
+                    totalFreeSimulated += Math.max(0, s.capacity - (s.simulated !== undefined ? s.simulated : s.occupied) - s.blocked);
+                });
+
+                const realBalance = totalFreeReal - backlogTotal;
+                const simulatedBalance = totalFreeSimulated - backlogTotal;
+
+                stats.turnover = {
+                    backlogTotal: backlogTotal,
+                    realBalance: realBalance,
+                    simulatedBalance: simulatedBalance,
+                    simulatedOccupied: totalSimulatedOccupied,
+                    pendingTransfers: pendingTransfersCount,
+                    paWaiting: paList.length
+                };
+
+                // --- 9. DADOS PARA GRÁFICOS (RECHARTS) ---
+                const uiSectorData = Object.values(stats.sectors)
+                    .filter(s => !isCtiClass(s.type))
+                    .sort((a,b) => b.occupied - a.occupied);
+                
+                const ctiSectorData = Object.values(stats.sectors)
+                    .filter(s => isCtiClass(s.type))
+                    .sort((a,b) => b.occupied - a.occupied);
+
+                const totalInflow = inflow.pa.count + inflow.surgical.count + inflow.hdm.count + inflow.ambulatory.count + inflow.transfer.count;
+                const flowData = [
+                    { name: 'Entradas', value: totalInflow, fill: '#f59e0b' }, 
+                    { name: 'Altas', value: outflows.discharges, fill: '#10b981' }
+                ];
+
+                const insuranceData = Object.keys(insuranceMap)
+                    .map(k => ({ name: k, value: insuranceMap[k] }))
+                    .sort((a,b) => b.value - a.value)
+                    .slice(0, 5);
+
+                // Retorna objeto consolidado
+                return {
+                    stats,
+                    globalOcc: stats.indicators.occupancyRate,
+                    inflow,
+                    outflows,
+                    charts: { uiSectorData, ctiSectorData, flowData, insuranceData },
+                    ctiSubSectors: ctiSectorData // Compatibilidade
+                };
+
+            } catch (e) {
+                window.App.ErrorHandler.handle(e, 'Intelligence.processHospitalState');
+                return null;
+            }
+        }
+    };
+  })();
+</script>

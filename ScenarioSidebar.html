@@ -1,0 +1,202 @@
+
+<script>
+  (function() {
+    try {
+      window.App = window.App || {};
+
+      if (window.App.DEBUG) console.log('[ScenarioSidebar] Iniciando carregamento...');
+
+      var useMemo = React.useMemo;
+
+      var ScenarioInflow = function(props) {
+        var data = props.data;
+        var infoTick = props.infoTick;
+
+        var paDisplayList = useMemo(function() {
+            var defaultItem = { type: 'AVG', value: (data && data.inflow && data.inflow.pa && data.inflow.pa.avgTime) || "0h 0m", label: 'Tempo Medio' };
+            var items = [defaultItem];
+            if (data && data.inflow && data.inflow.pa && Array.isArray(data.inflow.pa.criticalNames) && data.inflow.pa.criticalNames.length > 0) {
+                data.inflow.pa.criticalNames.forEach(function(name) {
+                    items.push({ type: 'CRITICAL', value: name, label: 'Excedente 12h' });
+                });
+            }
+            return items;
+        }, [data && data.inflow && data.inflow.pa]);
+
+        var paDisplayLen = paDisplayList.length || 1;
+        var paCurrentItem = paDisplayList[infoTick % paDisplayLen] || paDisplayList[0] || {};
+        var paCount = (data && data.inflow && data.inflow.pa && data.inflow.pa.count) || 0;
+        var paIsDanger = paCount > 5 ? ' nx-gs-val-danger' : '';
+        var paCurrentLabel = paCurrentItem.label || "...";
+        var paCurrentValue = paCurrentItem.value || "...";
+        var isCritical = paCurrentItem.type === 'CRITICAL';
+        var surgLabel = (data && data.inflow && data.inflow.surgical && data.inflow.surgical.label) || "Adm. Bloco";
+        var surgUi = (data && data.inflow && data.inflow.surgical && data.inflow.surgical.ui) || 0;
+        var surgCti = (data && data.inflow && data.inflow.surgical && data.inflow.surgical.cti) || 0;
+        var hdmLabel = (data && data.inflow && data.inflow.hdm && data.inflow.hdm.label) || "Adm. HDM";
+        var hdmUi = (data && data.inflow && data.inflow.hdm && data.inflow.hdm.ui) || 0;
+        var hdmCti = (data && data.inflow && data.inflow.hdm && data.inflow.hdm.cti) || 0;
+        var ambCount = (data && data.inflow && data.inflow.ambulatory && data.inflow.ambulatory.count) || 0;
+        var transCount = (data && data.inflow && data.inflow.transfer && data.inflow.transfer.count) || 0;
+
+        return React.createElement('div', { className: 'nx-gs-inflow' },
+            React.createElement('div', { className: 'nx-gs-inflow-rows' },
+
+                // --- ROW 1: Fila P.A. ---
+                React.createElement('div', { className: 'nx-gs-inflow-row' },
+                    React.createElement('div', { className: 'nx-gs-inflow-row-inner' },
+                        React.createElement('span', { className: 'nx-gs-label' }, "AGUARDANDO P.A."),
+                        React.createElement('div', { className: 'nx-gs-inflow-top' },
+                            React.createElement('div', { className: 'nx-gs-inflow-baseline' },
+                                React.createElement('span', { className: 'nx-gs-num font-mono-nums' + paIsDanger }, paCount),
+                                React.createElement('span', { className: 'nx-gs-tag' }, "PCT")
+                            ),
+                            React.createElement('div', { className: 'nx-gs-inflow-sub', key: infoTick },
+                                React.createElement('span', { className: 'nx-gs-inflow-sub-label' }, paCurrentLabel),
+                                isCritical
+                                    ? React.createElement('span', { className: 'nx-gs-inflow-sub-critical' }, paCurrentValue)
+                                    : React.createElement('span', { className: 'nx-gs-inflow-sub-value' }, paCurrentValue)
+                            )
+                        )
+                    )
+                ),
+
+                // --- ROW 2: Adm. Bloco ---
+                React.createElement('div', { className: 'nx-gs-inflow-row' },
+                    React.createElement('div', { className: 'nx-gs-inflow-row-inner' },
+                        React.createElement('span', { className: 'nx-gs-label' }, surgLabel),
+                        React.createElement('div', { className: 'nx-gs-inflow-pair' },
+                            React.createElement('div', { className: 'nx-gs-inflow-pair-item' },
+                                React.createElement('span', { className: 'nx-gs-num font-mono-nums' }, surgUi),
+                                React.createElement('span', { className: 'nx-gs-tag nx-gs-c-blue' }, "UI")
+                            ),
+                            React.createElement('div', { className: 'nx-gs-sep' }),
+                            React.createElement('div', { className: 'nx-gs-inflow-pair-item' },
+                                React.createElement('span', { className: 'nx-gs-tag nx-gs-c-purple' }, "CTI"),
+                                React.createElement('span', { className: 'nx-gs-num font-mono-nums' }, surgCti)
+                            )
+                        )
+                    )
+                ),
+
+                // --- ROW 3: Adm. HDM ---
+                React.createElement('div', { className: 'nx-gs-inflow-row' },
+                    React.createElement('div', { className: 'nx-gs-inflow-row-inner' },
+                        React.createElement('span', { className: 'nx-gs-label' }, hdmLabel),
+                        React.createElement('div', { className: 'nx-gs-inflow-pair' },
+                            React.createElement('div', { className: 'nx-gs-inflow-pair-item' },
+                                React.createElement('span', { className: 'nx-gs-num font-mono-nums' }, hdmUi),
+                                React.createElement('span', { className: 'nx-gs-tag nx-gs-c-blue' }, "UI")
+                            ),
+                            React.createElement('div', { className: 'nx-gs-sep' }),
+                            React.createElement('div', { className: 'nx-gs-inflow-pair-item' },
+                                React.createElement('span', { className: 'nx-gs-tag nx-gs-c-purple' }, "CTI"),
+                                React.createElement('span', { className: 'nx-gs-num font-mono-nums' }, hdmCti)
+                            )
+                        )
+                    )
+                ),
+
+                // --- ROW 4: Externo / Amb. ---
+                React.createElement('div', { className: 'nx-gs-inflow-row' },
+                    React.createElement('div', { className: 'nx-gs-inflow-row-inner' },
+                        React.createElement('span', { className: 'nx-gs-label' }, "Externo / Amb."),
+                        React.createElement('div', { className: 'nx-gs-inflow-baseline' },
+                            React.createElement('span', { className: 'nx-gs-num font-mono-nums' }, ambCount),
+                            React.createElement('span', { className: 'nx-gs-label-sm' }, "Solicitacoes")
+                        )
+                    )
+                ),
+
+                // --- ROW 5: Transferencia ---
+                React.createElement('div', { className: 'nx-gs-inflow-row' },
+                    React.createElement('div', { className: 'nx-gs-inflow-row-inner' },
+                        React.createElement('span', { className: 'nx-gs-label' }, "Transferencia"),
+                        React.createElement('div', { className: 'nx-gs-inflow-baseline' },
+                            React.createElement('span', { className: 'nx-gs-num font-mono-nums nx-gs-c-purple' }, transCount),
+                            React.createElement('span', { className: 'nx-gs-label-sm' }, "Aguardando")
+                        )
+                    )
+                )
+            )
+        );
+      };
+
+      var ScenarioCapacity = function(props) {
+        var data = props.data;
+        var filteredCtiBoxes = props.filteredCtiBoxes;
+        var UI = window.App.UI || {};
+        var statsClasses = (data && data.stats && data.stats.classes) || {};
+        var uiFree = (statsClasses['UI'] && statsClasses['UI'].free) || 0;
+        var uiEstFree = (statsClasses['UI_EST'] && statsClasses['UI_EST'].free) || 0;
+        var pedFree = (statsClasses['PED'] && statsClasses['PED'].free) || 0;
+        var cetipeFree = (statsClasses['CETIPE'] && statsClasses['CETIPE'].free) || 0;
+
+        return React.createElement('div', { className: 'nx-gs-capacity' },
+            React.createElement('div', { className: 'nx-gs-capacity-rows' },
+
+                // --- ROW 1: Vagas UI ---
+                React.createElement('div', { className: 'nx-gs-capacity-row' },
+                    React.createElement('div', { className: 'nx-gs-capacity-row-inner' },
+                        React.createElement('span', { className: 'nx-gs-label' }, "Vagas UI"),
+                        React.createElement('div', { className: 'nx-gs-inflow-pair' },
+                            React.createElement('div', { className: 'nx-gs-capacity-val-col' },
+                                React.createElement('span', { className: 'nx-gs-num font-mono-nums' }, uiFree),
+                                React.createElement('span', { className: 'nx-gs-capacity-val-sub nx-gs-c-cyan' }, "Geral")
+                            ),
+                            React.createElement('div', { className: 'nx-gs-sep' }),
+                            React.createElement('div', { className: 'nx-gs-capacity-val-col' },
+                                React.createElement('span', { className: 'nx-gs-num font-mono-nums' }, uiEstFree),
+                                React.createElement('span', { className: 'nx-gs-capacity-val-sub nx-gs-c-blue' }, "Estrategica")
+                            )
+                        )
+                    )
+                ),
+
+                // --- ROW 2: Vagas CTI (tall) ---
+                React.createElement('div', { className: 'nx-gs-capacity-row nx-gs-capacity-row-tall' },
+                    React.createElement('div', { className: 'nx-gs-capacity-row-inner' },
+                        React.createElement('span', { className: 'nx-gs-label' }, "Vagas CTI"),
+                        UI.StatusGrid
+                            ? React.createElement(UI.StatusGrid, { subSectors: filteredCtiBoxes, color: "purple", cols: 3, className: "nx-gs-status-grid" })
+                            : React.createElement('div', { style: { fontSize: '10px', color: 'var(--nx-text-secondary)' } }, "CTI: " + (statsClasses['CTI'] ? statsClasses['CTI'].free : 0) + " vagos")
+                    )
+                ),
+
+                // --- ROW 3: Vagas Pediatrico ---
+                React.createElement('div', { className: 'nx-gs-capacity-row' },
+                    React.createElement('div', { className: 'nx-gs-capacity-row-inner' },
+                        React.createElement('span', { className: 'nx-gs-label' }, "Vagas Pediatrico"),
+                        React.createElement('div', { className: 'nx-gs-inflow-pair' },
+                            React.createElement('div', { className: 'nx-gs-capacity-val-col' },
+                                React.createElement('span', { className: 'nx-gs-num font-mono-nums' }, pedFree),
+                                React.createElement('span', { className: 'nx-gs-capacity-val-sub nx-gs-c-rose' }, "Pediatria")
+                            ),
+                            React.createElement('div', { className: 'nx-gs-sep' }),
+                            React.createElement('div', { className: 'nx-gs-capacity-val-col' },
+                                React.createElement('span', { className: 'nx-gs-num font-mono-nums' }, cetipeFree),
+                                React.createElement('span', { className: 'nx-gs-capacity-val-sub nx-gs-c-purple' }, "Cetipe")
+                            )
+                        )
+                    )
+                )
+            )
+        );
+      };
+
+      window.App.ScenarioInflow = ScenarioInflow;
+      window.App.ScenarioCapacity = ScenarioCapacity;
+      // Backup para recovery defensivo
+      window.App._ScenarioInflowFn = ScenarioInflow;
+      window.App._ScenarioCapacityFn = ScenarioCapacity;
+
+      if (window.App.DEBUG) console.log('[ScenarioSidebar] Carregado com sucesso. ScenarioInflow:', !!ScenarioInflow, '| ScenarioCapacity:', !!ScenarioCapacity);
+
+    } catch(e) {
+      console.error('[ScenarioSidebar] ERRO FATAL ao carregar modulo:', e.message, e.stack || '');
+      // NAO sobrescreve se ja existir (fallback)
+      if (!window.App.ScenarioInflow) window.App.ScenarioInflow = undefined;
+      if (!window.App.ScenarioCapacity) window.App.ScenarioCapacity = undefined;
+    }
+  })();
+</script>

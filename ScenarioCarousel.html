@@ -1,0 +1,131 @@
+
+<script>
+  (function() {
+    try {
+      window.App = window.App || {};
+
+      var SafeChart = function(props) {
+          var Component = props.component;
+          var fallbackLabel = props.fallbackLabel;
+          if (!Component) {
+              return React.createElement('div', { className: 'nx-gs-chart-fallback' },
+                  React.createElement('span', null, fallbackLabel || "Grafico Indisponivel")
+              );
+          }
+          return React.createElement(Component, props);
+      };
+
+      var ScenarioDashboard = function(props) {
+          var data = props.data;
+          var uiCombined = props.uiCombined;
+          var ctiAdultoCombined = props.ctiAdultoCombined;
+          var isMobile = props.isMobile;
+          var Charts = window.App.Charts || {};
+
+          if (!data) return null;
+
+          var globalOcc = (data && data.globalOcc) || 0;
+          var uiPct = uiCombined.total > 0 ? Math.round((uiCombined.occupied / uiCombined.total) * 100) : 0;
+          var ctiPct = ctiAdultoCombined.total > 0 ? Math.round((ctiAdultoCombined.occupied / ctiAdultoCombined.total) * 100) : 0;
+          var totals = data.stats.totals || {};
+          var availGlobal = (totals.capacity || 0) - (totals.occupied || 0);
+          var insuranceCounts = (data.stats && data.stats.insuranceCounts) || {};
+
+          var gaugeColor = globalOcc >= 90 ? 'rose' : globalOcc >= 80 ? 'amber' : 'cyan';
+          var uiColor = uiPct >= 90 ? 'rose' : uiPct >= 80 ? 'amber' : 'blue';
+          var ctiColor = ctiPct >= 90 ? 'rose' : ctiPct >= 80 ? 'amber' : 'purple';
+          var GAUGE = isMobile ? 90 : 120;
+
+          return React.createElement('div', { className: 'nx-dash' },
+
+              // --- TOP: 3 Gauges ---
+              React.createElement('div', { className: 'nx-dash-gauges' },
+                  React.createElement('div', { className: 'nx-dash-gauge-card' },
+                      React.createElement(SafeChart, { component: Charts.RadialGauge, value: globalOcc, label: "Global", subtext: "Ocupacao Geral", color: gaugeColor, size: GAUGE }),
+                      React.createElement('div', { className: 'nx-dash-gauge-stats' },
+                          React.createElement('div', { className: 'nx-dash-gauge-stat' },
+                              React.createElement('span', { className: 'nx-dash-gauge-stat-num font-mono-nums' }, totals.capacity),
+                              React.createElement('span', { className: 'nx-dash-gauge-stat-label' }, "Total")
+                          ),
+                          React.createElement('div', { className: 'nx-dash-gauge-stat' },
+                              React.createElement('span', { className: 'nx-dash-gauge-stat-num font-mono-nums ' + (availGlobal === 0 ? 'nx-gs-val-danger' : 'nx-gs-val-safe-emerald') }, availGlobal),
+                              React.createElement('span', { className: 'nx-dash-gauge-stat-label' }, "Livres")
+                          )
+                      )
+                  ),
+                  React.createElement('div', { className: 'nx-dash-gauge-card' },
+                      React.createElement(SafeChart, { component: Charts.RadialGauge, value: uiPct, label: "Internacao", subtext: "UI + Est + Ped", color: uiColor, size: GAUGE }),
+                      React.createElement('div', { className: 'nx-dash-gauge-stats' },
+                          React.createElement('div', { className: 'nx-dash-gauge-stat' },
+                              React.createElement('span', { className: 'nx-dash-gauge-stat-num font-mono-nums' }, uiCombined.total),
+                              React.createElement('span', { className: 'nx-dash-gauge-stat-label' }, "Total")
+                          ),
+                          React.createElement('div', { className: 'nx-dash-gauge-stat' },
+                              React.createElement('span', { className: 'nx-dash-gauge-stat-num font-mono-nums ' + (uiCombined.free === 0 ? 'nx-gs-val-danger' : 'nx-gs-val-safe-cyan') }, uiCombined.free),
+                              React.createElement('span', { className: 'nx-dash-gauge-stat-label' }, "Livres")
+                          )
+                      )
+                  ),
+                  React.createElement('div', { className: 'nx-dash-gauge-card' },
+                      React.createElement(SafeChart, { component: Charts.RadialGauge, value: ctiPct, label: "Intensiva", subtext: "CTI + Cetipe", color: ctiColor, size: GAUGE }),
+                      React.createElement('div', { className: 'nx-dash-gauge-stats' },
+                          React.createElement('div', { className: 'nx-dash-gauge-stat' },
+                              React.createElement('span', { className: 'nx-dash-gauge-stat-num font-mono-nums' }, ctiAdultoCombined.total),
+                              React.createElement('span', { className: 'nx-dash-gauge-stat-label' }, "Total")
+                          ),
+                          React.createElement('div', { className: 'nx-dash-gauge-stat' },
+                              React.createElement('span', { className: 'nx-dash-gauge-stat-num font-mono-nums ' + (ctiAdultoCombined.free === 0 ? 'nx-gs-val-danger' : 'nx-gs-val-safe-purple') }, ctiAdultoCombined.free),
+                              React.createElement('span', { className: 'nx-dash-gauge-stat-label' }, "Livres")
+                          )
+                      )
+                  )
+              ),
+
+              // --- BOTTOM: Charts Grid ---
+              React.createElement('div', { className: 'nx-dash-charts' },
+                  // Fluxo Diario
+                  React.createElement('div', { className: 'nx-dash-chart-card' },
+                      React.createElement('span', { className: 'nx-dash-chart-title nx-gs-c-amber' }, "FLUXO DIARIO"),
+                      React.createElement(SafeChart, { component: Charts.FlowBarChart, data: data.charts.flowData })
+                  ),
+                  // Convenios
+                  React.createElement('div', { className: 'nx-dash-chart-card' },
+                      React.createElement('span', { className: 'nx-dash-chart-title nx-gs-c-emerald' }, "CONVENIOS"),
+                      React.createElement(SafeChart, { component: Charts.InsurancePieChart, data: data.charts.insuranceData })
+                  ),
+                  // UI Setores
+                  React.createElement('div', { className: 'nx-dash-chart-card' },
+                      React.createElement('span', { className: 'nx-dash-chart-title nx-gs-c-cyan' }, "SETORES UI"),
+                      React.createElement(SafeChart, { component: Charts.SectorBarChart, data: data.charts.uiSectorData, color: "cyan" })
+                  ),
+                  // CTI Setores
+                  React.createElement('div', { className: 'nx-dash-chart-card' },
+                      React.createElement('span', { className: 'nx-dash-chart-title nx-gs-c-purple' }, "SETORES CTI"),
+                      React.createElement(SafeChart, { component: Charts.SectorBarChart, data: data.charts.ctiSectorData, color: "purple" })
+                  ),
+                  // Convenios: Estrategicos vs Standard
+                  React.createElement('div', { className: 'nx-dash-chart-card nx-dash-insurance-cats' },
+                      React.createElement('span', { className: 'nx-dash-chart-title nx-gs-c-blue' }, "CONVENIOS (CATEGORIA)"),
+                      React.createElement('div', { className: 'nx-dash-cat-row' },
+                          React.createElement('div', { className: 'nx-dash-cat-item' },
+                              React.createElement('span', { className: 'nx-dash-cat-num font-mono-nums nx-gs-c-blue' }, insuranceCounts.strategic || 0),
+                              React.createElement('span', { className: 'nx-dash-cat-label' }, "Estrategicos")
+                          ),
+                          React.createElement('div', { className: 'nx-dash-cat-item' },
+                              React.createElement('span', { className: 'nx-dash-cat-num font-mono-nums nx-gs-c-emerald' }, insuranceCounts.standard || 0),
+                              React.createElement('span', { className: 'nx-dash-cat-label' }, "Standard")
+                          )
+                      )
+                  )
+              )
+          );
+      };
+
+      window.App.ScenarioCarousel = ScenarioDashboard;
+
+      if (window.App.DEBUG) console.log('[ScenarioCarousel] Dashboard carregado com sucesso.');
+    } catch(e) {
+      console.error('[ScenarioCarousel] ERRO FATAL:', e.message, e.stack || '');
+    }
+  })();
+</script>

@@ -1,0 +1,344 @@
+
+<script>
+  (function() {
+    window.App = window.App || {};
+    window.App.TransferComponents = {};
+
+    var TransferStats = function(props) {
+        var chartStats = props.chartStats;
+        var UI = window.App.UI || {};
+        return React.createElement('div', { className: 'nx-kpi-grid print-hidden mb-8' },
+            React.createElement(UI.KPICard, { label: 'Total (Período)', data: [{value: chartStats.total, label: 'Registros'}], icon: 'ph-list-dashes', theme: 'kpi-blue' }),
+            React.createElement(UI.KPICard, { label: 'Status', data: [{value: chartStats.accepted, label: 'Aceitos'}, {value: chartStats.rejected, label: 'Recusados'}], icon: 'ph-check-circle', theme: 'kpi-emerald' }),
+            React.createElement(UI.KPICard, { label: 'Aguardando', data: [{value: chartStats.pending, label: 'Pendentes'}], icon: 'ph-clock', theme: 'kpi-amber' }),
+            React.createElement(UI.KPICard, { label: 'Admissão', data: [{value: chartStats.flowEntry, label: 'Entradas'}], icon: 'ph-sign-in', theme: 'kpi-cyan' }),
+            React.createElement(UI.KPICard, { label: 'Alta / Ext', data: [{value: chartStats.flowExit, label: 'Saídas'}], icon: 'ph-sign-out', theme: 'kpi-rose' })
+        );
+    };
+
+    var TransferForm = function(props) {
+        var formData = props.formData;
+        var handleInputChange = props.handleInputChange;
+        var handleSave = props.handleSave;
+        var initialFormState = props.initialFormState;
+        var setFormData = props.setFormData;
+        var isSubmitting = props.isSubmitting;
+        var INSURANCE_OPTIONS = props.INSURANCE_OPTIONS;
+        var SECTOR_OPTIONS = props.SECTOR_OPTIONS;
+        var FLOW_OPTIONS = props.FLOW_OPTIONS;
+        var STATUS_OPTIONS = props.STATUS_OPTIONS;
+        var structure = props.structure;
+        var patientsList = props.patientsList;
+        var blockedBedsList = props.blockedBedsList;
+        var UI = window.App.UI || {};
+        return React.createElement(UI.Card, { className: 'p-8 relative z-20' },
+            React.createElement('div', { className: 'nx-settings-card-header' },
+                React.createElement('i', { className: 'ph-bold ph-paper-plane-right nx-icon-primary nx-settings-card-header-icon' }),
+                React.createElement('h2', { className: 'nx-settings-card-header-title' }, 'Nova Solicitação Externa')
+            ),
+            React.createElement('form', { onSubmit: handleSave, autoComplete: 'off' },
+                React.createElement(UI.Input, { label: 'Nome do paciente', name: 'patient', value: formData.patient, onChange: handleInputChange, required: true, icon: 'ph-user' }),
+                React.createElement('div', { className: 'grid grid-cols-1 md:grid-cols-2 gap-x-6' },
+                    React.createElement(UI.SearchableSelect, { label: 'Convênio', name: 'insurance', value: formData.insurance, onChange: handleInputChange, options: INSURANCE_OPTIONS, required: true }),
+                    React.createElement(UI.Input, { type: 'date', label: 'Data', name: 'date', value: formData.date, onChange: handleInputChange, required: true }),
+                    React.createElement(UI.SearchableSelect, { label: 'Tipo de Fluxo', name: 'flow', value: formData.flow, onChange: handleInputChange, options: FLOW_OPTIONS, required: true }),
+                    React.createElement(UI.SearchableSelect, { label: 'Status Inicial', name: 'status', value: formData.status, onChange: handleInputChange, options: STATUS_OPTIONS, required: true }),
+                    formData.flow === 'SAIDA'
+                        ? React.createElement('div', { className: 'md:col-span-2' },
+                            React.createElement(UI.Input, { label: 'Destino Externo (Hospital/Clínica/Casa)', name: 'sector', value: formData.sector, onChange: handleInputChange, required: true, icon: 'ph-hospital', disabled: formData.status === 'RECUSADO' })
+                        )
+                        : React.createElement(React.Fragment, null,
+                            React.createElement(UI.SearchableSelect, { label: 'Setor', name: 'sector', value: formData.sector, onChange: handleInputChange, options: SECTOR_OPTIONS, required: true, disabled: !formData.flow || formData.status === 'RECUSADO' }),
+                            React.createElement(UI.BedSelector, { label: 'Leito', name: 'bed', value: formData.bed, onChange: handleInputChange, sector: null, structure: structure, patientsList: patientsList, blockedBedsList: blockedBedsList, disabled: formData.status === 'RECUSADO' })
+                        ),
+                    React.createElement('div', { className: 'md:col-span-2' },
+                        React.createElement(UI.Input, { label: 'Motivo / Observação', name: 'reason', value: formData.reason, onChange: handleInputChange })
+                    )
+                ),
+                React.createElement('div', { className: 'flex justify-end gap-4 mt-8' },
+                    React.createElement('button', { type: 'button', onClick: function() { setFormData(initialFormState); }, disabled: isSubmitting, className: 'btn-action-cancel flex-1' }, 'Limpar'),
+                    React.createElement('button', { type: 'submit', disabled: isSubmitting, className: 'btn-action-confirm flex-[2] group' },
+                        React.createElement('i', { className: 'ph-bold ' + (isSubmitting ? 'ph-spinner animate-spin' : 'ph-floppy-disk') + ' mr-3 transition-transform group-hover:scale-110' }),
+                        ' ' + (isSubmitting ? 'REGISTRANDO...' : 'REGISTRAR')
+                    )
+                )
+            )
+        );
+    };
+
+    var TransferCharts = function(props) {
+        var activeChartTab = props.activeChartTab;
+        var setActiveChartTab = props.setActiveChartTab;
+        var dateFilter = props.dateFilter;
+        var setDateFilter = props.setDateFilter;
+        var chartStats = props.chartStats;
+        var UI = window.App.UI || {};
+        var Recharts = window.Recharts || {};
+        var PieChart = Recharts.PieChart;
+        var Pie = Recharts.Pie;
+        var BarChart = Recharts.BarChart;
+        var Bar = Recharts.Bar;
+        var Cell = Recharts.Cell;
+        var Tooltip = Recharts.Tooltip;
+        var ResponsiveContainer = Recharts.ResponsiveContainer;
+        var Legend = Recharts.Legend;
+        var XAxis = Recharts.XAxis;
+        var YAxis = Recharts.YAxis;
+        var CartesianGrid = Recharts.CartesianGrid;
+
+        return React.createElement(UI.Card, { className: 'p-6 flex flex-col h-full min-h-[450px]' },
+            React.createElement('div', { className: 'flex nx-separator mb-6 shrink-0' },
+                ['CONVENIO', 'STATUS', 'FLUXO'].map(function(tab) {
+                    return React.createElement('button', {
+                        key: tab,
+                        onClick: function() { setActiveChartTab(tab); },
+                        className: 'flex-1 py-3 text-[10px] font-bold uppercase tracking-widest transition-all ' + (activeChartTab === tab ? 'text-cyan-400 border-b-2 border-cyan-400' : 'text-slate-500 hover:text-slate-300')
+                    }, tab);
+                })
+            ),
+            React.createElement('div', { className: 'flex gap-3 mb-6 shrink-0' },
+                React.createElement('input', { type: 'date', value: dateFilter.start, onChange: function(e) { setDateFilter({...dateFilter, start: e.target.value}); }, className: 'block nx-input-box' }),
+                React.createElement('input', { type: 'date', value: dateFilter.end, onChange: function(e) { setDateFilter({...dateFilter, end: e.target.value}); }, className: 'block nx-input-box' })
+            ),
+            React.createElement('div', { className: 'w-full flex-1 relative min-h-0' },
+                chartStats.total > 0 && ResponsiveContainer
+                    ? React.createElement(ResponsiveContainer, { width: '100%', height: '100%' },
+                        activeChartTab === 'CONVENIO' && BarChart
+                            ? React.createElement(BarChart, { data: chartStats.chartData, layout: 'vertical', margin: {top: 5, right: 30, left: 10, bottom: 5} },
+                                React.createElement(CartesianGrid, { strokeDasharray: '3 3', horizontal: false, stroke: '#1e293b' }),
+                                React.createElement(XAxis, { type: 'number', hide: true }),
+                                React.createElement(YAxis, { dataKey: 'name', type: 'category', width: 70, tick: {fill: '#64748b', fontSize: 9}, axisLine: false, tickLine: false }),
+                                React.createElement(Tooltip, { contentStyle: { backgroundColor: '#0f172a', borderColor: '#334155' }, itemStyle: { color: '#fff', fontSize: '10px' } }),
+                                React.createElement(Bar, { dataKey: 'value', fill: '#3b82f6', radius: [0, 4, 4, 0], barSize: 15 })
+                            )
+                            : activeChartTab === 'STATUS' && BarChart
+                                ? React.createElement(BarChart, { data: chartStats.statusData, margin: {top: 5, right: 5, left: -20, bottom: 5} },
+                                    React.createElement(CartesianGrid, { strokeDasharray: '3 3', vertical: false, stroke: '#1e293b' }),
+                                    React.createElement(XAxis, { dataKey: 'name', tick: {fill: '#64748b', fontSize: 9}, axisLine: false }),
+                                    React.createElement(YAxis, { tick: {fill: '#64748b', fontSize: 9}, axisLine: false }),
+                                    React.createElement(Tooltip, { contentStyle: { backgroundColor: '#0f172a', borderColor: '#334155' }, itemStyle: { color: '#fff', fontSize: '10px' } }),
+                                    React.createElement(Bar, { dataKey: 'value', radius: [4, 4, 0, 0], barSize: 30 },
+                                        chartStats.statusData.map(function(e, i) { return React.createElement(Cell, { key: i, fill: e.fill }); })
+                                    )
+                                )
+                                : activeChartTab === 'FLUXO' && PieChart
+                                    ? React.createElement(PieChart, null,
+                                        React.createElement(Pie, { data: chartStats.flowData, cx: '50%', cy: '50%', innerRadius: 50, outerRadius: 80, paddingAngle: 2, dataKey: 'value' },
+                                            chartStats.flowData.map(function(e, i) { return React.createElement(Cell, { key: i, fill: e.fill, stroke: 'rgba(0,0,0,0)' }); })
+                                        ),
+                                        React.createElement(Tooltip, { contentStyle: { backgroundColor: '#0f172a', borderColor: '#334155' }, itemStyle: { color: '#fff', fontSize: '10px' } }),
+                                        React.createElement(Legend, { verticalAlign: 'bottom', height: 24, iconSize: 8, wrapperStyle: {fontSize: '10px'} })
+                                    )
+                                    : null
+                    )
+                    : React.createElement('div', { className: 'absolute inset-0 flex flex-col items-center justify-center text-slate-600 opacity-50' },
+                        React.createElement('i', { className: 'ph-bold ph-chart-bar text-4xl mb-2' }),
+                        React.createElement('span', { className: 'text-xs font-black uppercase tracking-widest' }, 'Sem dados no período')
+                    )
+            )
+        );
+    };
+
+    var TransferPendingList = function(props) {
+        var pendingTransfers = props.pendingTransfers;
+        var handleArrived = props.handleArrived;
+        var handleDelete = props.handleDelete;
+        var UI = window.App.UI || {};
+        return React.createElement(UI.Card, { className: 'p-0 mt-8 flex flex-col overflow-hidden min-h-[300px] print-hidden' },
+            React.createElement('div', { className: 'nx-settings-list-header' },
+                React.createElement('div', { className: 'flex items-center' },
+                    React.createElement('i', { className: 'ph-bold ph-hourglass text-amber-400 text-2xl mr-3' }),
+                    React.createElement('h2', { className: 'nx-settings-list-title' }, 'Transferências Pendentes')
+                )
+            ),
+            React.createElement('div', { className: 'p-6 flex-1 overflow-y-auto custom-scrollbar' },
+                React.createElement('div', { className: 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4' },
+                    pendingTransfers.length > 0
+                        ? pendingTransfers.map(function(t) {
+                            return React.createElement('div', { key: t.id, className: 'nx-waitlist-card group' },
+                                React.createElement('div', { className: 'mb-3' },
+                                    React.createElement('div', { className: 'flex justify-between items-start mb-2' },
+                                        React.createElement('h3', { className: 'font-bold nx-text-heading text-xs truncate pr-2 w-full leading-tight' }, t.patient),
+                                        React.createElement('span', { className: 'nx-badge-neutral' }, t.insurance)
+                                    ),
+                                    React.createElement('div', { className: 'flex items-center text-[10px] text-slate-300' },
+                                        t.flow === 'SAIDA'
+                                            ? React.createElement(React.Fragment, null,
+                                                React.createElement('i', { className: 'ph-bold ph-arrow-left text-sm mr-2 text-orange-400' }),
+                                                React.createElement('span', { className: 'font-bold uppercase tracking-wide' }, t.sector || 'EXTERNO')
+                                            )
+                                            : React.createElement(React.Fragment, null,
+                                                React.createElement('i', { className: 'ph-bold ph-arrow-right text-sm mr-2 text-cyan-400' }),
+                                                React.createElement('span', { className: 'font-bold tracking-wide' }, t.sector + (t.bed ? ' (' + t.bed + ')' : ''))
+                                            )
+                                    ),
+                                    React.createElement('div', { className: 'mt-2' },
+                                        React.createElement('span', { className: 'text-[8px] px-2 py-0.5 rounded border font-black uppercase tracking-widest ' + (t.status === 'AGUARDANDO' ? 'bg-amber-950/30 text-amber-400 border-amber-500/30' : 'bg-emerald-950/30 text-emerald-400 border-emerald-500/30') }, t.status)
+                                    )
+                                ),
+                                React.createElement('div', { className: 'flex gap-2 mt-auto pt-3 border-t border-[var(--nx-border)]' },
+                                    React.createElement('button', {
+                                        onClick: function() { handleArrived(t); },
+                                        className: 'flex-1 ' + (t.flow === 'SAIDA' ? 'hover:bg-orange-500 text-orange-400 hover:text-white border-orange-500/30' : 'hover:bg-cyan-500 text-cyan-400 hover:text-white border-cyan-500/30') + ' border border-transparent bg-slate-100 dark:bg-slate-950/50 rounded-lg py-2 text-[9px] font-bold uppercase tracking-widest transition-all flex items-center justify-center'
+                                    },
+                                        React.createElement('i', { className: 'ph-bold ' + (t.flow === 'SAIDA' ? 'ph-check' : 'ph-pencil-simple') + ' text-sm mr-1' }),
+                                        ' ' + (t.flow === 'SAIDA' ? 'CONCLUIR' : 'REGISTRAR')
+                                    ),
+                                    React.createElement('button', { onClick: function() { handleDelete(t.id); }, className: 'w-10 hover:bg-rose-500 text-rose-400 hover:text-white border border-transparent bg-slate-100 dark:bg-slate-950/50 hover:border-rose-500/30 rounded-lg py-2 flex items-center justify-center transition-all' },
+                                        React.createElement('i', { className: 'ph-bold ph-trash text-sm' })
+                                    )
+                                )
+                            );
+                        })
+                        : React.createElement('div', { className: 'col-span-full py-20 flex flex-col items-center justify-center text-slate-500 opacity-60' },
+                            React.createElement('svg', { className: 'w-24 h-24 mb-6 text-slate-700', fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', strokeWidth: '1' },
+                                React.createElement('path', { strokeLinecap: 'round', strokeLinejoin: 'round', d: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z' })
+                            ),
+                            React.createElement('p', { className: 'text-xs font-black uppercase tracking-[0.3em] text-slate-400' }, 'Nenhuma pendência'),
+                            React.createElement('p', { className: 'text-[10px] text-slate-600 mt-2 text-center max-w-[200px]' }, 'Não há transferências aguardando conclusão.')
+                        )
+                )
+            )
+        );
+    };
+
+    var TransferModals = function(props) {
+        var showHistoryModal = props.showHistoryModal;
+        var setShowHistoryModal = props.setShowHistoryModal;
+        var historyFilters = props.historyFilters;
+        var setHistoryFilters = props.setHistoryFilters;
+        var INSURANCE_OPTIONS = props.INSURANCE_OPTIONS;
+        var fetchHistory = props.fetchHistory;
+        var isLoadingHistory = props.isLoadingHistory;
+        var filteredModalData = props.filteredModalData;
+        var showReportModal = props.showReportModal;
+        var setShowReportModal = props.setShowReportModal;
+        var chartStats = props.chartStats;
+        var UI = window.App.UI || {};
+        var Utils = window.App.Utils || {};
+        var HospitalLogo = window.HospitalLogo;
+
+        return React.createElement(React.Fragment, null,
+            React.createElement(UI.Modal, { isOpen: showHistoryModal, onClose: function() { setShowHistoryModal(false); }, size: 'large', title: 'Histórico de Transferências (Pesquisa no Servidor)' },
+                React.createElement('div', { className: 'flex flex-col h-full max-h-[80vh]' },
+                    React.createElement('div', { className: 'px-6 py-4 nx-form-section rounded-none border-x-0 border-t-0 grid grid-cols-1 md:grid-cols-5 gap-4 items-end' },
+                        React.createElement('div', null,
+                            React.createElement('label', { className: 'nx-text-label' }, 'Início'),
+                            React.createElement(UI.Input, { type: 'date', value: historyFilters.startDate, onChange: function(e) { setHistoryFilters({...historyFilters, startDate: e.target.value}); } })
+                        ),
+                        React.createElement('div', null,
+                            React.createElement('label', { className: 'nx-text-label' }, 'Fim'),
+                            React.createElement(UI.Input, { type: 'date', value: historyFilters.endDate, onChange: function(e) { setHistoryFilters({...historyFilters, endDate: e.target.value}); } })
+                        ),
+                        React.createElement('div', null,
+                            React.createElement('label', { className: 'nx-text-label' }, 'Convênio'),
+                            React.createElement(UI.SearchableSelect, { value: historyFilters.insurance, onChange: function(e) { setHistoryFilters({...historyFilters, insurance: e.target.value}); }, options: INSURANCE_OPTIONS })
+                        ),
+                        React.createElement('div', null,
+                            React.createElement('label', { className: 'nx-text-label' }, 'Busca'),
+                            React.createElement(UI.Input, { value: historyFilters.search, onChange: function(e) { setHistoryFilters({...historyFilters, search: e.target.value}); }, placeholder: 'Nome...' })
+                        ),
+                        React.createElement('button', { onClick: fetchHistory, className: 'h-[42px] mb-px bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg font-bold text-xs uppercase tracking-widest flex items-center justify-center gap-2' },
+                            React.createElement('i', { className: 'ph-bold ph-magnifying-glass' }),
+                            ' Filtrar'
+                        )
+                    ),
+                    React.createElement('div', { className: 'flex-1 overflow-y-auto custom-scrollbar p-0 bg-slate-50 dark:bg-slate-900/30' },
+                        isLoadingHistory
+                            ? React.createElement('div', { className: 'flex h-full items-center justify-center text-cyan-500' },
+                                React.createElement('i', { className: 'ph-bold ph-circle-notch animate-spin text-4xl' })
+                            )
+                            : React.createElement('div', { className: 'nx-glass-table-wrapper rounded-none border-none shadow-none min-h-[300px]' },
+                                React.createElement('table', { className: 'nx-glass-table w-full text-center' },
+                                    React.createElement('thead', { className: 'sticky top-0 z-10 shadow-md' },
+                                        React.createElement('tr', null,
+                                            React.createElement('th', { className: 'p-3' }, 'Data'),
+                                            React.createElement('th', { className: 'p-3' }, 'Fluxo'),
+                                            React.createElement('th', { className: 'p-3 text-left' }, 'Paciente'),
+                                            React.createElement('th', { className: 'p-3' }, 'Origem/Destino'),
+                                            React.createElement('th', { className: 'p-3' }, 'Status'),
+                                            React.createElement('th', { className: 'p-3' }, 'Concluído')
+                                        )
+                                    ),
+                                    React.createElement('tbody', null,
+                                        filteredModalData.map(function(t) {
+                                            return React.createElement('tr', { key: t.id, className: 'nx-glass-table-row' },
+                                                React.createElement('td', { className: 'p-3 font-mono text-xs text-slate-500' }, Utils.formatDateBr(t.date)),
+                                                React.createElement('td', { className: 'p-3 text-xs text-slate-400' },
+                                                    React.createElement('span', { className: 'bg-slate-100 dark:bg-slate-950 px-2 py-1 rounded border border-slate-200 dark:border-slate-800 text-[9px] font-bold uppercase' }, t.flow)
+                                                ),
+                                                React.createElement('td', { className: 'p-3 text-left pl-4' },
+                                                    React.createElement('div', { className: 'flex flex-col' },
+                                                        React.createElement('span', { className: 'text-xs font-bold text-slate-900 dark:text-white uppercase' }, t.patient),
+                                                        React.createElement('span', { className: 'text-[9px] text-slate-500 font-bold tracking-wider' }, t.insurance)
+                                                    )
+                                                ),
+                                                React.createElement('td', { className: 'p-3 text-xs font-bold text-cyan-400 uppercase' }, t.sector),
+                                                React.createElement('td', { className: 'p-3 text-xs font-bold uppercase text-slate-400' }, t.status),
+                                                React.createElement('td', { className: 'p-3 text-center' },
+                                                    t.arrived
+                                                        ? React.createElement('i', { className: 'ph-fill ph-check-circle text-emerald-500 text-lg' })
+                                                        : React.createElement('i', { className: 'ph-bold ph-minus text-slate-700' })
+                                                )
+                                            );
+                                        }),
+                                        filteredModalData.length === 0 && React.createElement('tr', null,
+                                            React.createElement('td', { colSpan: '6', className: 'p-8 text-center text-slate-500 text-xs italic' }, 'Nenhum registro encontrado neste período.')
+                                        )
+                                    )
+                                )
+                            )
+                    )
+                )
+            ),
+            showReportModal && React.createElement(UI.Modal, { isOpen: true, onClose: function() { setShowReportModal(false); }, size: 'large', title: 'Modo Impressão', className: 'bg-white text-black' },
+                React.createElement('div', { className: 'flex flex-col h-full bg-white text-black p-8 overflow-y-auto', id: 'report-content' },
+                    React.createElement('div', { className: 'flex justify-between items-start border-b-2 border-black pb-6 mb-8' },
+                        React.createElement('div', { className: 'flex flex-col' },
+                            HospitalLogo && React.createElement(HospitalLogo, { className: 'h-14 w-auto brightness-0 mb-2' }),
+                            React.createElement('span', { className: 'text-[10px] font-black uppercase tracking-widest' }, 'SysGestão Enterprise v3')
+                        ),
+                        React.createElement('div', { className: 'text-right flex flex-col' },
+                            React.createElement('h2', { className: 'text-2xl font-black uppercase tracking-tighter' }, 'Relatório de Transferências'),
+                            React.createElement('span', { className: 'text-sm font-bold border-b border-black pb-1 inline-block ml-auto' }, new Date().toLocaleDateString())
+                        )
+                    ),
+                    React.createElement('table', { className: 'w-full text-xs text-left border-collapse' },
+                        React.createElement('thead', null,
+                            React.createElement('tr', { className: 'border-b border-black' },
+                                React.createElement('th', { className: 'py-2' }, 'DATA'),
+                                React.createElement('th', { className: 'py-2' }, 'PACIENTE'),
+                                React.createElement('th', { className: 'py-2' }, 'CONVÊNIO'),
+                                React.createElement('th', { className: 'py-2' }, 'DESTINO'),
+                                React.createElement('th', { className: 'py-2 text-center' }, 'STATUS')
+                            )
+                        ),
+                        React.createElement('tbody', null,
+                            chartStats.filteredData.map(function(t) {
+                                return React.createElement('tr', { key: t.id, className: 'border-b border-gray-200' },
+                                    React.createElement('td', { className: 'py-2' }, Utils.formatDateBr(t.date)),
+                                    React.createElement('td', { className: 'py-2 uppercase font-bold' }, t.patient),
+                                    React.createElement('td', { className: 'py-2' }, t.insurance),
+                                    React.createElement('td', { className: 'py-2' }, t.sector),
+                                    React.createElement('td', { className: 'py-2 text-center' }, t.status)
+                                );
+                            })
+                        )
+                    ),
+                    React.createElement('div', { className: 'mt-8 flex justify-end print-hidden' },
+                        React.createElement('button', { onClick: function() { window.print(); }, className: 'px-6 py-3 bg-black text-white font-bold uppercase text-xs rounded hover:bg-gray-800' }, 'Imprimir Agora')
+                    )
+                )
+            )
+        );
+    };
+
+    window.App.TransferComponents = {
+        TransferStats: TransferStats,
+        TransferForm: TransferForm,
+        TransferCharts: TransferCharts,
+        TransferPendingList: TransferPendingList,
+        TransferModals: TransferModals
+    };
+  })();
+</script>

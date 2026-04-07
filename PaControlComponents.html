@@ -1,0 +1,273 @@
+<script>
+  (function() {
+    window.App = window.App || {};
+    window.App.PaControlComponents = {};
+
+    var PaControlStats = function(props) {
+        var stats = props.stats;
+        var UI = window.App.UI || {};
+        return React.createElement('div', { className: 'nx-kpi-grid mb-8' },
+            React.createElement(UI.KPICard, { label: 'Total na Fila', data: [{value: stats.total, label: "Pacientes"}], icon: 'ph-users-three', theme: 'kpi-blue' }),
+            React.createElement(UI.KPICard, { label: 'Demanda UI', data: [{value: stats.ui, label: "Internação"}], icon: 'ph-hospital', theme: 'kpi-cyan' }),
+            React.createElement(UI.KPICard, { label: 'Demanda CTI', data: [{value: stats.cti, label: "Críticos"}], icon: 'ph-heartbeat', theme: 'kpi-purple' }),
+            React.createElement(UI.KPICard, { label: 'Limite Convênio', data: [{value: stats.critical, label: "> 12 Horas"}], icon: 'ph-warning-octagon', theme: 'kpi-rose', className: stats.critical > 0 ? "nx-alert-critical" : "" }),
+            React.createElement(UI.KPICard, { label: 'Atenção', data: [{value: stats.warning, label: "> 6 Horas"}], icon: 'ph-clock-afternoon', theme: 'kpi-amber' })
+        );
+    };
+
+    var PaControlForm = function(props) {
+        var formData = props.formData;
+        var setFormData = props.setFormData;
+        var handleAddPatient = props.handleAddPatient;
+        var initialForm = props.initialForm;
+        var INSURANCE_OPTIONS = props.INSURANCE_OPTIONS;
+        var SECTOR_OPTIONS = props.SECTOR_OPTIONS;
+        var SPECIALTY_OPTIONS = props.SPECIALTY_OPTIONS;
+
+        var UI = window.App.UI || {};
+        return React.createElement(UI.Card, { className: 'p-8 sticky top-6' },
+            React.createElement('div', { className: 'nx-settings-card-header' },
+                React.createElement('i', { className: 'ph-bold ph-user-plus nx-icon-primary nx-settings-card-header-icon' }),
+                React.createElement('h2', { className: 'nx-settings-card-header-title' }, 'Entrada Rápida')
+            ),
+            React.createElement('form', { onSubmit: handleAddPatient, autoComplete: 'off' },
+                React.createElement(UI.Input, { label: 'Nome do Paciente', name: 'patient', value: formData.patient, onChange: function(e) { setFormData(Object.assign({}, formData, { patient: e.target.value.toUpperCase() })); }, required: true, icon: 'ph-user' }),
+                React.createElement('div', { className: 'grid grid-cols-1 md:grid-cols-2 gap-x-6' },
+                    React.createElement(UI.SearchableSelect, { label: 'Convênio', value: formData.insurance, onChange: function(e) { setFormData(Object.assign({}, formData, { insurance: e.target.value })); }, options: INSURANCE_OPTIONS, required: true }),
+                    React.createElement(UI.SearchableSelect, { label: 'Destino Provável', value: formData.sector, onChange: function(e) { setFormData(Object.assign({}, formData, { sector: e.target.value })); }, options: SECTOR_OPTIONS, required: true }),
+                    React.createElement(UI.Input, { label: 'Médico Assistente', value: formData.assistantDoctor, onChange: function(e) { setFormData(Object.assign({}, formData, { assistantDoctor: e.target.value.toUpperCase() })); }, icon: 'ph-stethoscope' }),
+                    React.createElement(UI.SearchableSelect, { label: 'Especialidade', value: formData.specialty, onChange: function(e) { setFormData(Object.assign({}, formData, { specialty: e.target.value })); }, options: SPECIALTY_OPTIONS }),
+                    React.createElement(UI.Input, { type: 'date', label: 'Data Entrada', value: formData.date, onChange: function(e) { setFormData(Object.assign({}, formData, { date: e.target.value })); } }),
+                    React.createElement(UI.Input, { type: 'time', label: 'Hora Entrada', value: formData.time, onChange: function(e) { setFormData(Object.assign({}, formData, { time: e.target.value })); } })
+                ),
+                React.createElement('div', { className: 'flex gap-4 mt-8' },
+                    React.createElement('button', { type: 'button', onClick: function() { setFormData(initialForm); }, className: 'btn-action-cancel flex-1' }, 'Limpar'),
+                    React.createElement('button', { type: 'submit', className: 'btn-action-confirm flex-[2] group' },
+                        React.createElement('i', { className: 'ph-bold ph-plus mr-2 transition-transform group-hover:scale-110' }), ' Adicionar à Fila'
+                    )
+                )
+            )
+        );
+    };
+
+    var PaControlWaitList = function(props) {
+        var patients = props.patients;
+        var currentTime = props.currentTime;
+        var checkRestricted = props.checkRestricted;
+        var handleOpenAdmission = props.handleOpenAdmission;
+        var handleOpenEditPa = props.handleOpenEditPa;
+        var setRenewalModal = props.setRenewalModal;
+        var setConfirmDialog = props.setConfirmDialog;
+
+        var UI = window.App.UI || {};
+        var Utils = window.App.Utils || {};
+
+        return React.createElement(UI.Card, { className: 'p-0 flex flex-col h-full overflow-hidden min-h-[600px]' },
+            React.createElement('div', { className: 'nx-settings-list-header' },
+                React.createElement('h2', { className: 'nx-settings-list-title flex items-center gap-2' },
+                    React.createElement('i', { className: 'ph-bold ph-list-bullets text-amber-500' }),
+                    ' Aguardando Vaga'
+                )
+            ),
+            React.createElement('div', { className: 'p-4 grid grid-cols-1 sm:grid-cols-2 gap-3 content-start overflow-y-auto custom-scrollbar max-h-[calc(100vh-250px)]' },
+                patients.length > 0 ? (
+                    patients.map(function(p) {
+                        var durationInfo = Utils.getDurationInfo(p, currentTime);
+                        var duration = durationInfo.duration;
+                        var alertLevel = durationInfo.alertLevel;
+                        var restricted = checkRestricted(p.patient);
+
+                        var alertClass = "";
+                        if (alertLevel === 'CRITICAL') alertClass = "nx-alert-critical";
+                        else if (alertLevel === 'WARNING') alertClass = "nx-alert-warning";
+
+                        return React.createElement('div', { key: p.id, className: 'nx-waitlist-card group ' + alertClass },
+                            alertLevel !== 'NONE' && React.createElement('div', { className: 'absolute top-0 right-0 px-2 py-1 rounded-bl-lg text-[8px] font-black uppercase tracking-tighter ' + (alertLevel === 'CRITICAL' ? 'bg-rose-600 text-white animate-pulse' : 'bg-amber-600 text-black') }, alertLevel === 'CRITICAL' ? 'ESTOURO 12H' : 'ALERTA 6H'),
+                            React.createElement('div', { className: 'flex justify-between items-start mb-3' },
+                                React.createElement('div', { className: 'flex flex-col min-w-0 pr-4' },
+                                    React.createElement('h4', { className: 'font-black text-xs uppercase leading-tight truncate transition-colors ' + (restricted ? 'text-rose-400' : 'nx-text-heading group-hover:text-cyan-400') },
+                                        restricted && React.createElement('i', { className: 'ph-fill ph-prohibit mr-1 text-rose-500 animate-pulse' }),
+                                        p.patient || p.name
+                                    ),
+                                    React.createElement('span', { className: 'nx-text-label mt-1' }, p.insurance)
+                                ),
+                                React.createElement('div', { className: 'flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-white dark:bg-slate-900/90 rounded-lg p-1 absolute right-2 top-8 z-20 shadow-xl border border-slate-200 dark:border-slate-700' },
+                                    React.createElement('button', { onClick: function(e) { e.stopPropagation(); handleOpenAdmission(p); }, title: 'Internar', className: 'w-8 h-8 rounded-lg flex items-center justify-center text-white bg-emerald-600 hover:bg-emerald-500 transition-all' }, React.createElement('i', { className: 'ph-bold ph-sign-in' })),
+                                    React.createElement('button', { onClick: function(e) { e.stopPropagation(); handleOpenEditPa(p); }, title: 'Editar', className: 'w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 bg-slate-700 hover:bg-cyan-600 hover:text-white transition-all' }, React.createElement('i', { className: 'ph-bold ph-pencil-simple' })),
+                                    React.createElement('button', { onClick: function(e) { e.stopPropagation(); setRenewalModal({show: true, patient: p}); }, title: 'Renovar Tempo', className: 'w-8 h-8 rounded-lg flex items-center justify-center text-cyan-400 bg-cyan-500/10 hover:bg-cyan-500 hover:text-white transition-all' }, React.createElement('i', { className: 'ph-bold ph-clock-counter-clockwise' })),
+                                    React.createElement('button', { onClick: function(e) { e.stopPropagation(); setConfirmDialog({show:true, idToDelete: p.id}); }, title: 'Excluir', className: 'w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-all' }, React.createElement('i', { className: 'ph-bold ph-trash' }))
+                                )
+                            ),
+                            React.createElement('div', { className: 'mt-auto' },
+                                React.createElement('div', { className: 'flex flex-wrap gap-2 mb-3' },
+                                    React.createElement('span', { className: 'text-[8px] font-black text-cyan-400 bg-cyan-950/30 px-2 py-0.5 rounded border border-cyan-500/20 uppercase tracking-widest' }, p.sector),
+                                    p.assistantDoctor && React.createElement('span', { className: 'text-[8px] font-black text-slate-500 bg-slate-800 px-2 py-0.5 rounded border border-white/5 uppercase tracking-widest truncate max-w-[100px]' }, p.assistantDoctor)
+                                ),
+                                React.createElement('div', { className: 'flex items-center justify-between pt-2 border-t border-[var(--nx-border)]' },
+                                    React.createElement('div', { className: 'flex items-center gap-2 text-[10px] font-black font-mono ' + (alertLevel === 'CRITICAL' ? 'text-rose-400' : alertLevel === 'WARNING' ? 'text-amber-400' : 'text-slate-400') },
+                                        React.createElement('i', { className: 'ph-bold ' + (alertLevel !== 'NONE' ? 'ph-warning animate-pulse' : 'ph-clock') }),
+                                        duration
+                                    )
+                                )
+                            )
+                        );
+                    })
+                ) : (
+                    React.createElement('div', { className: 'nx-waitlist-empty' },
+                        React.createElement('svg', { className: 'nx-waitlist-empty-icon', fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', strokeWidth: '1' },
+                            React.createElement('path', { strokeLinecap: 'round', strokeLinejoin: 'round', d: 'M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z' })
+                        ),
+                        React.createElement('p', { className: 'nx-waitlist-empty-title' }, 'Fila Limpa'),
+                        React.createElement('p', { className: 'nx-waitlist-empty-text' }, 'Nenhum paciente aguardando no P.A.')
+                    )
+                )
+            )
+        );
+    };
+
+    var PaControlModals = function(props) {
+        var admissionModal = props.admissionModal;
+        var setAdmissionModal = props.setAdmissionModal;
+        var confirmAdmission = props.confirmAdmission;
+        var INSURANCE_OPTIONS = props.INSURANCE_OPTIONS;
+        var SECTOR_OPTIONS = props.SECTOR_OPTIONS;
+        var SPECIALTY_OPTIONS = props.SPECIALTY_OPTIONS;
+        var structure = props.structure;
+        var patientsList = props.patientsList;
+        var blockedBedsList = props.blockedBedsList;
+        var editPaModal = props.editPaModal;
+        var setEditPaModal = props.setEditPaModal;
+        var confirmEditPa = props.confirmEditPa;
+        var renewalModal = props.renewalModal;
+        var setRenewalModal = props.setRenewalModal;
+        var handleConfirmRenewal = props.handleConfirmRenewal;
+        var confirmDialog = props.confirmDialog;
+        var setConfirmDialog = props.setConfirmDialog;
+        var handleDelete = props.handleDelete;
+        var showRestrictedModal = props.showRestrictedModal;
+        var setShowRestrictedModal = props.setShowRestrictedModal;
+        var restrictedForm = props.restrictedForm;
+        var setRestrictedForm = props.setRestrictedForm;
+        var restrictedList = props.restrictedList;
+        var setRestrictedList = props.setRestrictedList;
+        var runOptimistic = props.runOptimistic;
+        var actions = props.actions;
+
+        var UI = window.App.UI || {};
+        var Utils = window.App.Utils || {};
+
+        return React.createElement(React.Fragment, null,
+            React.createElement(UI.Modal, { isOpen: admissionModal.show, onClose: function() { setAdmissionModal({show:false, data:null}); }, title: 'Internar Paciente do P.A.' },
+                admissionModal.data && React.createElement('form', { onSubmit: confirmAdmission, className: 'p-6' },
+                    React.createElement('div', { className: 'mb-6 nx-form-section flex items-center justify-between' },
+                        React.createElement('div', null,
+                            React.createElement('span', { className: 'nx-text-label block mb-1' }, 'Paciente'),
+                            React.createElement('h3', { className: 'text-lg font-black nx-text-heading' }, admissionModal.data.name)
+                        ),
+                        React.createElement('i', { className: 'ph-duotone ph-user-circle text-3xl nx-icon-primary' })
+                    ),
+                    React.createElement(UI.Input, { label: 'Nº Atendimento', value: admissionModal.data.attendance, onChange: function(e) { setAdmissionModal(Object.assign({}, admissionModal, { data: Object.assign({}, admissionModal.data, { attendance: e.target.value.toUpperCase() }) })); }, required: true, autoFocus: true, icon: 'ph-identification-card' }),
+                    React.createElement('div', { className: 'grid grid-cols-2 gap-4' },
+                        React.createElement(UI.SearchableSelect, { label: 'Convênio', value: admissionModal.data.insurance, onChange: function(e) { setAdmissionModal(Object.assign({}, admissionModal, { data: Object.assign({}, admissionModal.data, { insurance: e.target.value }) })); }, options: INSURANCE_OPTIONS, required: true }),
+                        React.createElement(UI.SearchableSelect, { label: 'Setor Destino', value: admissionModal.data.sector, onChange: function(e) { setAdmissionModal(Object.assign({}, admissionModal, { data: Object.assign({}, admissionModal.data, { sector: e.target.value, bed: '' }) })); }, options: SECTOR_OPTIONS, required: true })
+                    ),
+                    React.createElement(UI.BedSelector, { label: 'Leito Destino', value: admissionModal.data.bed, onChange: function(e) { setAdmissionModal(Object.assign({}, admissionModal, { data: Object.assign({}, admissionModal.data, { bed: e.target.value }) })); }, sector: admissionModal.data.sector, structure: structure, patientsList: patientsList, blockedBedsList: blockedBedsList, required: true }),
+                    React.createElement('div', { className: 'grid grid-cols-2 gap-4' },
+                        React.createElement(UI.Input, { label: 'Médico', value: admissionModal.data.assistantDoctor, onChange: function(e) { setAdmissionModal(Object.assign({}, admissionModal, { data: Object.assign({}, admissionModal.data, { assistantDoctor: e.target.value.toUpperCase() }) })); }, icon: 'ph-stethoscope' }),
+                        React.createElement(UI.SearchableSelect, { label: 'Especialidade', value: admissionModal.data.specialty, onChange: function(e) { setAdmissionModal(Object.assign({}, admissionModal, { data: Object.assign({}, admissionModal.data, { specialty: e.target.value }) })); }, options: SPECIALTY_OPTIONS })
+                    ),
+                    React.createElement('button', { type: 'submit', className: 'btn-action-confirm w-full mt-6' }, 'Confirmar Internação')
+                )
+            ),
+
+            React.createElement(UI.Modal, { isOpen: editPaModal.show, onClose: function() { setEditPaModal({show:false, data:null}); }, title: 'Editar Registro P.A.' },
+                editPaModal.data && React.createElement('form', { onSubmit: confirmEditPa, className: 'p-6' },
+                    React.createElement(UI.Input, { label: 'Nome Completo', value: editPaModal.data.patient, onChange: function(e) { setEditPaModal(Object.assign({}, editPaModal, { data: Object.assign({}, editPaModal.data, { patient: e.target.value.toUpperCase() }) })); }, required: true, icon: 'ph-user' }),
+                    React.createElement(UI.SearchableSelect, { label: 'Convênio', value: editPaModal.data.insurance, onChange: function(e) { setEditPaModal(Object.assign({}, editPaModal, { data: Object.assign({}, editPaModal.data, { insurance: e.target.value }) })); }, options: INSURANCE_OPTIONS, required: true }),
+                    React.createElement(UI.SearchableSelect, { label: 'Destino Provável', value: editPaModal.data.sector, onChange: function(e) { setEditPaModal(Object.assign({}, editPaModal, { data: Object.assign({}, editPaModal.data, { sector: e.target.value }) })); }, options: SECTOR_OPTIONS }),
+                    React.createElement('div', { className: 'grid grid-cols-2 gap-4' },
+                        React.createElement(UI.Input, { label: 'Médico', value: editPaModal.data.assistantDoctor, onChange: function(e) { setEditPaModal(Object.assign({}, editPaModal, { data: Object.assign({}, editPaModal.data, { assistantDoctor: e.target.value.toUpperCase() }) })); }),
+                        React.createElement(UI.SearchableSelect, { label: 'Especialidade', value: editPaModal.data.specialty, onChange: function(e) { setEditPaModal(Object.assign({}, editPaModal, { data: Object.assign({}, editPaModal.data, { specialty: e.target.value }) })); }, options: SPECIALTY_OPTIONS })
+                    ),
+                    React.createElement('button', { type: 'submit', className: 'btn-action-confirm w-full mt-6' }, 'Salvar Alterações')
+                )
+            ),
+
+            React.createElement(UI.Modal, { isOpen: renewalModal.show, onClose: function() { setRenewalModal({show:false, patient:null}); }, title: 'Renovar Tempo de P.A.', className: 'text-center sm:max-w-sm' },
+                React.createElement('div', { className: 'p-8 flex flex-col items-center' },
+                    React.createElement('div', { className: 'w-20 h-20 rounded-full bg-cyan-500/10 flex items-center justify-center text-cyan-500 mb-6 border border-cyan-500/20 animate-pulse' }, React.createElement('i', { className: 'ph-bold ph-clock-counter-clockwise text-4xl' })),
+                    React.createElement('h3', { className: 'text-lg font-black nx-text-heading tracking-tight mb-2' }, 'Confirmar Renovação?'),
+                    React.createElement('div', { className: 'flex gap-3 w-full mt-8' },
+                        React.createElement('button', { onClick: function() { setRenewalModal({show:false, patient:null}); }, className: 'btn-action-cancel flex-1' }, 'Cancelar'),
+                        React.createElement('button', { onClick: handleConfirmRenewal, className: 'btn-action-confirm flex-[2]' }, 'Sim, Renovar')
+                    )
+                )
+            ),
+
+            React.createElement(UI.Modal, { isOpen: confirmDialog.show, onClose: function() { setConfirmDialog({show:false}); }, title: 'Remover da Fila', className: 'text-center sm:max-w-sm' },
+                React.createElement('div', { className: 'p-8 flex flex-col items-center' },
+                    React.createElement('div', { className: 'w-20 h-20 rounded-full bg-rose-500/10 flex items-center justify-center text-rose-500 mb-6 border border-rose-500/20' }, React.createElement('i', { className: 'ph-bold ph-trash text-4xl' })),
+                    React.createElement('h3', { className: 'text-lg font-black nx-text-heading tracking-tight mb-2' }, 'Confirmar Exclusão?'),
+                    React.createElement('div', { className: 'flex gap-3 w-full mt-8' },
+                        React.createElement('button', { onClick: function() { setConfirmDialog({show:false}); }, className: 'btn-action-cancel flex-1' }, 'Cancelar'),
+                        React.createElement('button', { onClick: function() { handleDelete(confirmDialog.idToDelete); }, className: 'btn-action-confirm flex-1 bg-rose-600 hover:bg-rose-500 border-rose-500 shadow-rose-500/30' }, 'Sim, Remover')
+                    )
+                )
+            ),
+
+            React.createElement(UI.Modal, { isOpen: showRestrictedModal, onClose: function() { setShowRestrictedModal(false); }, title: 'Gerenciar Restritos', size: 'normal' },
+                React.createElement('div', { className: 'p-6' },
+                    React.createElement('form', {
+                        onSubmit: function(e) {
+                            e.preventDefault();
+                            var newR = Object.assign({}, restrictedForm, { id: Date.now() });
+                            runOptimistic(
+                                function() {
+                                    setRestrictedList(restrictedList.concat([newR]));
+                                    setRestrictedForm({name:'', reason:''});
+                                    if(UI.Toast) UI.Toast.show("Paciente bloqueado!");
+                                },
+                                async function() { return await actions.addRestrictedPatient(restrictedForm); }
+                            );
+                        },
+                        className: 'mb-6 p-6 bg-rose-950/20 border border-rose-500/20 rounded-2xl'
+                    },
+                        React.createElement('div', { className: 'flex items-center gap-3 mb-4 text-rose-500' },
+                            React.createElement('i', { className: 'ph-fill ph-warning-octagon text-2xl' }),
+                            React.createElement('h4', { className: 'text-sm font-black uppercase tracking-widest' }, 'Novo Bloqueio')
+                        ),
+                        React.createElement(UI.Input, { label: 'Nome Completo', value: restrictedForm.name, onChange: function(e) { setRestrictedForm(Object.assign({}, restrictedForm, { name: e.target.value.toUpperCase() })); }, required: true }),
+                        React.createElement(UI.Input, { label: 'Motivo', value: restrictedForm.reason, onChange: function(e) { setRestrictedForm(Object.assign({}, restrictedForm, { reason: e.target.value.toUpperCase() })); }, required: true }),
+                        React.createElement('button', { type: 'submit', className: 'w-full h-12 bg-rose-600 hover:bg-rose-500 text-white rounded-xl font-black text-[10px] uppercase tracking-widest shadow-lg transition-all mt-2' }, 'Cadastrar Alerta')
+                    ),
+                    React.createElement('div', { className: 'max-h-60 overflow-y-auto custom-scrollbar' },
+                        restrictedList.length > 0 ? restrictedList.map(function(r, i) {
+                            return React.createElement('div', { key: i, className: 'flex justify-between items-center py-3 border-b border-[var(--nx-border)] group hover:bg-slate-100 dark:hover:bg-white/5 px-2 rounded transition-colors' },
+                                React.createElement('div', { className: 'flex flex-col min-w-0 pr-4' },
+                                    React.createElement('span', { className: 'text-[11px] font-black text-rose-400 uppercase truncate' }, r.name),
+                                    React.createElement('span', { className: 'text-[9px] text-slate-500 font-medium italic' }, r.reason)
+                                ),
+                                React.createElement('i', { className: 'ph-bold ph-prohibit text-rose-800 text-xl' })
+                            );
+                        }) : (
+                            React.createElement('div', { className: 'flex flex-col items-center justify-center py-8 text-slate-500 opacity-60' },
+                                React.createElement('svg', { className: 'w-16 h-16 mb-4 text-slate-700', fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', strokeWidth: '1' },
+                                    React.createElement('path', { strokeLinecap: 'round', strokeLinejoin: 'round', d: 'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z' })
+                                ),
+                                React.createElement('p', { className: 'text-[10px] font-black uppercase tracking-[0.2em] text-slate-400' }, 'Nenhum Restrito')
+                            )
+                        )
+                    )
+                )
+            )
+        );
+    };
+
+    window.App.PaControlComponents = {
+        PaControlStats: PaControlStats,
+        PaControlForm: PaControlForm,
+        PaControlWaitList: PaControlWaitList,
+        PaControlModals: PaControlModals
+    };
+  })();
+</script>

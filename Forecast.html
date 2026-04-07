@@ -1,0 +1,748 @@
+
+<script>
+  (function() {
+    window.App = window.App || {};
+
+    // --- SAFE CHART COMPONENT WRAPPER ---
+    var SafeChart = function(props) {
+        var Component = props.component;
+        var fallbackLabel = props.fallbackLabel;
+        if (!Component) {
+            return React.createElement('div', { className: 'flex h-full w-full items-center justify-center border border-dashed border-[var(--nx-border)] rounded-lg bg-[var(--nx-bg-panel)]' },
+                React.createElement('span', { className: 'text-[10px] font-bold text-[var(--nx-text-secondary)] uppercase tracking-widest' }, fallbackLabel || "Gráfico Indisponível")
+            );
+        }
+        return React.createElement(Component, props);
+    };
+
+    // --- STAT SLIDER (DESIGN SYSTEM V3) ---
+    var StatSlider = function(props) {
+        var label = props.label;
+        var value = props.value;
+        var max = props.max;
+        var onChange = props.onChange;
+        var color = props.color || "cyan";
+        var icon = props.icon;
+        var isReadOnly = props.isReadOnly;
+        var originalAutoValue = props.originalAutoValue;
+
+        var safeVal = parseInt(value || 0, 10);
+        var effectiveMax = Math.max(parseInt(max || 0, 10), safeVal, 1);
+        var percent = Math.min(100, Math.round((safeVal / effectiveMax) * 100));
+
+        var colorClasses = {
+            cyan:   { text: 'text-cyan-400', bg: 'bg-cyan-500', shadow: 'shadow-cyan-500/50' },
+            emerald:{ text: 'text-emerald-400', bg: 'bg-emerald-500', shadow: 'shadow-emerald-500/50' },
+            amber:  { text: 'text-amber-400', bg: 'bg-amber-500', shadow: 'shadow-amber-500/50' },
+            rose:   { text: 'text-rose-400', bg: 'bg-rose-500', shadow: 'shadow-rose-500/50' },
+            purple: { text: 'text-purple-400', bg: 'bg-purple-500', shadow: 'shadow-purple-500/50' },
+            blue:   { text: 'text-blue-400', bg: 'bg-blue-500', shadow: 'shadow-blue-500/50' },
+            slate:  { text: 'text-slate-500 dark:text-slate-400', bg: 'bg-slate-500', shadow: 'shadow-slate-500/50' }
+        };
+        var theme = colorClasses[color] || colorClasses.cyan;
+
+        return React.createElement('div', { className: 'group mb-4 last:mb-0 select-none relative' },
+            React.createElement('div', { className: 'flex justify-between items-end mb-2' },
+                React.createElement('div', { className: 'flex items-center gap-2 transition-colors duration-300' },
+                    icon && React.createElement('i', { className: 'ph-fill ' + icon + ' text-sm ' + (isReadOnly ? 'text-slate-600' : 'text-slate-500 dark:text-slate-400 group-hover:text-slate-900 dark:group-hover:text-white') }),
+                    React.createElement('span', { className: 'text-[10px] font-bold uppercase tracking-widest truncate max-w-[220px] ' + (isReadOnly ? 'text-slate-500' : 'text-slate-500 dark:text-slate-400 group-hover:text-slate-900 dark:group-hover:text-white'), title: label }, label)
+                ),
+                React.createElement('div', { className: 'flex items-baseline gap-1' },
+                    originalAutoValue !== undefined && originalAutoValue !== safeVal && React.createElement('span', { className: 'text-[9px] font-bold text-slate-600 mr-2 line-through decoration-slate-600', title: "Valor Original Automático" }, originalAutoValue),
+                    React.createElement('span', { className: 'text-sm font-black font-mono-nums ' + theme.text + ' drop-shadow-[0_0_8px_rgba(0,0,0,0.5)]' }, safeVal),
+                    !isReadOnly && React.createElement('span', { className: 'text-[9px] font-bold text-slate-700' }, '/ ', effectiveMax)
+                )
+            ),
+            React.createElement('div', { className: 'relative h-1.5 w-full bg-[var(--nx-bg-panel)] rounded-full overflow-hidden border border-[var(--nx-border)] group-hover:border-[var(--nx-text-secondary)] transition-colors' },
+                React.createElement('div', {
+                    className: 'absolute top-0 left-0 h-full ' + theme.bg + ' rounded-full transition-all duration-300 ease-out',
+                    style: { width: percent + '%', boxShadow: '0 0 10px ' + theme.bg }
+                }),
+                !isReadOnly && React.createElement('input', {
+                    type: 'range',
+                    min: '0',
+                    max: effectiveMax,
+                    value: safeVal,
+                    onChange: function(e) { onChange(e.target.value); },
+                    className: 'w-full h-full absolute inset-0 opacity-0 cursor-ew-resize z-20',
+                    title: 'Ajustar valor (Máx: ' + effectiveMax + ')'
+                })
+            )
+        );
+    };
+
+    var Forecast = function() {
+      var ctx = window.App.Context.useAppContext();
+      var user = ctx.user;
+      var patientsList = ctx.patientsList;
+      var blockedBedsList = ctx.blockedBedsList;
+      var preloadedForecast = ctx.preloadedForecast;
+      var structure = ctx.structure;
+      var simulationState = ctx.simulationState;
+      var setSimulationState = ctx.setSimulationState;
+      var actions = ctx.actions;
+      var paList = ctx.paList;
+      var transferList = ctx.transferList;
+      var dischargeList = ctx.dischargeList;
+
+      var UI = window.App.UI || {};
+      var Utils = window.App.Utils || {};
+      var Intelligence = window.App.Intelligence || {};
+      var Charts = window.App.Charts || {};
+      var ReportPage = (window.App.ReportComponents || {}).ReportPage;
+      var HospitalLogo = window.HospitalLogo;
+
+      var getLocalISODate = function(offsetDays) {
+          var d = new Date();
+          d.setDate(d.getDate() + (offsetDays || 0));
+          var year = d.getFullYear();
+          var month = String(d.getMonth() + 1).padStart(2, '0');
+          var day = String(d.getDate()).padStart(2, '0');
+          return year + '-' + month + '-' + day;
+      };
+
+      var selectedDateState = React.useState(function() { return getLocalISODate(1); });
+      var selectedDate = selectedDateState[0];
+      var setSelectedDate = selectedDateState[1];
+
+      var showReportState = React.useState(false);
+      var showReport = showReportState[0];
+      var setShowReport = showReportState[1];
+
+      var showMenuState = React.useState(false);
+      var showMenu = showMenuState[0];
+      var setShowMenu = showMenuState[1];
+
+      var saveStatusState = React.useState('idle');
+      var saveStatus = saveStatusState[0];
+      var setSaveStatus = saveStatusState[1];
+
+      var saveTimeoutRef = React.useRef(null);
+
+      var localOverridesState = React.useState({});
+      var localOverrides = localOverridesState[0];
+      var setLocalOverrides = localOverridesState[1];
+
+      var latestDataRef = React.useRef(null);
+
+      React.useEffect(function() {
+          setLocalOverrides({});
+          if (setSimulationState) setSimulationState({});
+      }, [selectedDate]);
+
+      // --- CONFIGS DINÂMICAS ---
+      var SECTOR_CONFIG = React.useMemo(function() {
+          var sectors = (structure && structure.sectors) || [];
+          return sectors
+              .filter(function(s) { return !s.isVirtual; })
+              .sort(function(a, b) { return (a.order || 999) - (b.order || 999); })
+              .map(function(s) {
+                  return {
+                      id: Utils.normalize(s.name),
+                      label: s.name,
+                      max: structure.beds ? structure.beds.filter(function(b) { return b.sector === s.name; }).length : 0,
+                      type: s.type
+                  };
+              });
+      }, [structure, Utils]);
+
+      var flowGroups = React.useMemo(function() {
+          var groups = {};
+          if (structure && structure.flows) {
+              structure.flows.filter(function(f) { return f.origin; }).forEach(function(flow) {
+                  var groupName = flow.group || 'OUTROS';
+                  if (!groups[groupName]) groups[groupName] = [];
+                  groups[groupName].push(flow);
+              });
+          }
+          return groups;
+      }, [structure]);
+
+      // --- CÁLCULO DE ESTADO HOSPITALAR (INTELLIGENCE) ---
+      var hospitalState = React.useMemo(function() {
+          var todayKey = getLocalISODate(0);
+          var todayData = preloadedForecast ? (preloadedForecast[todayKey] || {}) : {};
+
+          return Intelligence.processHospitalState({
+              structure: structure,
+              patientsList: patientsList,
+              blockedBedsList: blockedBedsList,
+              paList: paList,
+              transferList: transferList,
+              preloadedForecast: { forecast: (todayData.forecast || {}), reserves: (todayData.reserves || {}) }
+          }, simulationState);
+      }, [structure, patientsList, blockedBedsList, paList, transferList, simulationState, Intelligence, preloadedForecast]);
+
+      var dailyData = React.useMemo(function() {
+          var serverData = preloadedForecast ? (preloadedForecast[selectedDate] || {}) : {};
+          return Object.assign({ forecast: {}, reserves: {} }, serverData, localOverrides);
+      }, [preloadedForecast, selectedDate, localOverrides]);
+
+      React.useEffect(function() { latestDataRef.current = Object.assign({ date: selectedDate }, dailyData); }, [dailyData, selectedDate]);
+
+      // Auto-save logic
+      React.useEffect(function() {
+          return function() {
+              if (saveTimeoutRef.current) {
+                  clearTimeout(saveTimeoutRef.current);
+                  if (latestDataRef.current && actions && actions.saveForecast) {
+                      actions.saveForecast(latestDataRef.current);
+                  }
+              }
+          };
+      }, []);
+
+      var debouncedSave = function(newData) {
+          setSaveStatus('saving');
+          if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+
+          saveTimeoutRef.current = setTimeout(async function() {
+              saveTimeoutRef.current = null;
+              try {
+                  var payload = Object.assign({ date: selectedDate }, newData);
+                  await actions.saveForecast(payload);
+                  setSaveStatus('saved');
+                  setTimeout(function() { setSaveStatus('idle'); }, 2000);
+              } catch (err) { setSaveStatus('error'); }
+          }, 1500);
+      };
+
+      var handleDataChange = function(category, field, val) {
+          var currentCat = dailyData[category] || {};
+          var newState = Object.assign({}, localOverrides);
+          newState[category] = Object.assign({}, currentCat);
+          newState[category][field] = val;
+          setLocalOverrides(newState);
+          debouncedSave(Object.assign({}, dailyData, newState));
+      };
+
+      var handleSimulate = function(secId, val) {
+          if (setSimulationState) setSimulationState(function(prev) { return Object.assign({}, prev, (function() { var o = {}; o[secId] = val; return o; })()); });
+      };
+
+      // --- RESULTADOS POR CLASSE ---
+      var resultsByClass = React.useMemo(function() {
+          var normalizeClass = function(id) { return ['CTI','UTI','CETIPE'].some(function(k) { return String(id).toUpperCase().includes(k); }) ? 'CTI' : 'UI'; };
+          var res = {};
+          var sectorToMacro = {};
+
+          var getGroup = function(groupKey, type, lbl) {
+              if (!res[groupKey]) {
+                  var clsDef = structure && structure.classes ? structure.classes.find(function(c) { return c.id === groupKey; }) : undefined;
+                  var color = (clsDef && clsDef.color) ? clsDef.color : (type === 'CTI' ? 'purple' : 'blue');
+                  res[groupKey] = {
+                      id: groupKey,
+                      label: lbl || (clsDef ? clsDef.label : groupKey),
+                      type: type,
+                      capacity: 0, occupied: 0, blocked: 0, free: 0, forecast: 0, demand: 0, balance: 0,
+                      color: color
+                  };
+              }
+              if (lbl && res[groupKey].label === groupKey) {
+                  res[groupKey].label = lbl;
+              }
+              return res[groupKey];
+          };
+
+          var occupiedMap = new Set();
+          patientsList.forEach(function(p) { if (p.bed && !['SIM','ALTA','OBITO'].includes(p.dischargeStatus)) occupiedMap.add(Utils.normalize(p.bed)); });
+          var blockedMap = new Set();
+          blockedBedsList.forEach(function(b) { blockedMap.add(Utils.normalize(b.bed)); });
+
+          (structure && structure.beds ? structure.beds : []).forEach(function(bed) {
+              if (bed.isVirtual) return;
+
+              var groupKey = bed.type || 'UI';
+              var displayLabel = bed.macro || bed.type;
+              sectorToMacro[Utils.normalize(bed.sector)] = groupKey;
+
+              var type = normalizeClass(groupKey);
+              var group = getGroup(groupKey, type, displayLabel);
+              group.capacity++;
+
+              var norm = Utils.normalize(bed.number);
+              if (blockedMap.has(norm)) group.blocked++;
+              else if (occupiedMap.has(norm)) group.occupied++;
+              else group.free++;
+          });
+
+          SECTOR_CONFIG.forEach(function(sec) {
+              var secState = hospitalState && hospitalState.stats && hospitalState.stats.sectors ? hospitalState.stats.sectors[sec.id] : undefined;
+              if (secState && secState.divergence !== 0) {
+                  var delta = -secState.divergence;
+                  var globalGroupKey = sectorToMacro[sec.id];
+                  if (globalGroupKey && res[globalGroupKey]) {
+                      res[globalGroupKey].occupied += delta;
+                      res[globalGroupKey].free -= delta;
+                  }
+              }
+          });
+
+          Object.entries(dailyData.forecast).forEach(function(entry) {
+              var secId = entry[0];
+              var val = entry[1];
+              var globalGroupKey = sectorToMacro[Utils.normalize(secId)];
+              if (globalGroupKey && res[globalGroupKey]) {
+                  res[globalGroupKey].forecast += Utils.safeInt(val);
+              }
+          });
+
+          if (structure && structure.flows) {
+              structure.flows.filter(function(f) { return f.origin; }).forEach(function(flow) {
+                  var val = parseInt((dailyData.reserves && dailyData.reserves[flow.id]) || 0, 10);
+                  if (val > 0) {
+                      var flowType = Utils.normalize(flow.type);
+                      var targetGroup = Object.values(res).find(function(r) { return Utils.normalize(r.id) === flowType; });
+                      if (!targetGroup && (flowType !== 'INFO')) {
+                          var isCti = ['CTI','UTI','CETIPE'].some(function(k) { return flowType.includes(k); });
+                          targetGroup = Object.values(res).find(function(r) { return r.type === (isCti ? 'CTI' : 'UI'); });
+                      }
+                      if (targetGroup) targetGroup.demand += val;
+                  }
+              });
+          }
+
+          Object.values(res).forEach(function(r) { r.balance = (r.free + r.forecast) - r.demand; });
+          return res;
+      }, [dailyData, structure, patientsList, blockedBedsList, SECTOR_CONFIG, flowGroups, Utils, hospitalState]);
+
+      // --- TOTAIS ---
+      var totals = React.useMemo(function() {
+          var sums = {
+              uiDemand: 0, ctiDemand: 0,
+              occupiedSimulated: 0, capacity: 0, forecast: 0, totalDeficit: 0, free: 0
+          };
+          Object.values(resultsByClass).forEach(function(r) {
+              if (r.type === 'CTI') { sums.ctiDemand += r.demand; }
+              else { sums.uiDemand += r.demand; }
+
+              sums.totalDeficit += r.balance;
+              sums.capacity += r.capacity;
+              sums.forecast += r.forecast;
+              sums.free += r.free;
+          });
+
+          if (hospitalState && hospitalState.stats && hospitalState.stats.turnover && hospitalState.stats.turnover.simulatedOccupied !== undefined) {
+              sums.occupiedSimulated = hospitalState.stats.turnover.simulatedOccupied;
+          } else {
+              Object.values(resultsByClass).forEach(function(r) { sums.occupiedSimulated += r.occupied; });
+          }
+
+          return sums;
+      }, [resultsByClass, hospitalState]);
+
+      // --- KPIS ---
+      var kpiData = React.useMemo(function() {
+          var inflow = (hospitalState && hospitalState.inflow) || { surgical: {ui:0, cti:0}, hdm: {ui:0, cti:0}, ambulatory: {ui:0, cti:0} };
+          var outflows = (hospitalState && hospitalState.outflows) || { forecastTotal: 0 };
+
+          var turnover = (hospitalState && hospitalState.stats && hospitalState.stats.turnover) || { realBalance: 0, backlogTotal: 0, simulatedBalance: 0, simulatedOccupied: 0 };
+
+          var currentBalance = turnover.simulatedBalance !== undefined ? turnover.simulatedBalance : turnover.realBalance;
+          var currentBalanceStr = currentBalance > 0 ? '+' + currentBalance : '' + currentBalance;
+
+          var backlogTotal = turnover.backlogTotal;
+
+          var forecastDischarges = totals.forecast;
+          var forecastDemand = totals.uiDemand + totals.ctiDemand;
+
+          var targetBalance = currentBalance + forecastDischarges - forecastDemand;
+          var targetBalanceStr = targetBalance > 0 ? '+' + targetBalance : '' + targetBalance;
+
+          var effectiveOccupied = totals.occupiedSimulated;
+          var projOccupied = effectiveOccupied - forecastDischarges + forecastDemand;
+
+          var capacity = totals.capacity || 1;
+          var simulatedOccupancyRate = Math.round((effectiveOccupied / capacity) * 100);
+          var projectedRate = Math.round((Math.max(0, projOccupied) / capacity) * 100);
+
+          return [
+              {
+                  label: "Ocupação",
+                  today: simulatedOccupancyRate + '%',
+                  todayLabel: "Hoje",
+                  target: projectedRate + '%',
+                  targetLabel: "Amanhã",
+                  theme: "kpi-blue",
+                  icon: "ph-chart-pie-slice"
+              },
+              {
+                  label: "Entradas UI",
+                  today: (inflow.surgical.ui + inflow.hdm.ui + inflow.ambulatory.ui),
+                  todayLabel: "Hoje",
+                  target: totals.uiDemand,
+                  targetLabel: "Amanhã",
+                  theme: "kpi-cyan",
+                  icon: "ph-arrow-down-right"
+              },
+              {
+                  label: "Entradas CTI",
+                  today: (inflow.surgical.cti + inflow.hdm.cti + inflow.ambulatory.cti),
+                  todayLabel: "Hoje",
+                  target: totals.ctiDemand,
+                  targetLabel: "Amanhã",
+                  theme: "kpi-purple",
+                  icon: "ph-heartbeat"
+              },
+              {
+                  label: "Altas Previstas",
+                  today: outflows.forecastTotal,
+                  todayLabel: "Hoje",
+                  target: totals.forecast,
+                  targetLabel: "Amanhã",
+                  theme: "kpi-emerald",
+                  icon: "ph-sign-out"
+              },
+              {
+                  label: "Entradas Extras",
+                  today: backlogTotal,
+                  todayLabel: "Hoje",
+                  target: backlogTotal,
+                  targetLabel: "Amanhã",
+                  theme: "kpi-amber",
+                  icon: "ph-users-three"
+              },
+              {
+                  label: "Saldo Previsto",
+                  today: currentBalanceStr,
+                  todayLabel: "Atual",
+                  target: targetBalanceStr,
+                  targetLabel: "Previsto",
+                  theme: (currentBalance < 0 || targetBalance < 0) ? "kpi-rose" : "kpi-indigo",
+                  icon: "ph-scales"
+              }
+          ];
+      }, [totals, hospitalState, selectedDate]);
+
+      var visibleFlows = React.useMemo(function() {
+          return (structure && structure.flows || []).filter(function(flow) { return !!flow.origin; });
+      }, [structure && structure.flows]);
+
+      // --- RELATÓRIO HELPERS ---
+      var reportStats = React.useMemo(function() {
+          if (!hospitalState) return {};
+          return {
+              admissions: (hospitalState.inflow.surgical.ui + hospitalState.inflow.surgical.cti) +
+                          (hospitalState.inflow.hdm.ui + hospitalState.inflow.hdm.cti) +
+                          (hospitalState.inflow.ambulatory.ui + hospitalState.inflow.ambulatory.cti),
+              transfers: (transferList || []).filter(function(t) { return t.flow === 'ENTRADA' && t.status === 'ACEITO' && t.arrived; }).length,
+              dischargesUI: hospitalState.outflows.dischargesUI,
+              dischargesCTI: Math.max(0, hospitalState.outflows.discharges - hospitalState.outflows.dischargesUI),
+              turnoverGap: hospitalState.outflows.turnoverGap
+          };
+      }, [hospitalState, transferList]);
+
+      var sectorBreakdown = React.useMemo(function() {
+          if (!hospitalState || !hospitalState.stats || !hospitalState.stats.sectors) return { ui: [], cti: [] };
+          var allSectors = Object.values(hospitalState.stats.sectors);
+          var ui = allSectors.filter(function(s) { return !['CTI','UTI','CETIPE'].some(function(k) { return s.type.includes(k); }); });
+          var cti = allSectors.filter(function(s) { return ['CTI','UTI','CETIPE'].some(function(k) { return s.type.includes(k); }); });
+          return { ui: ui, cti: cti };
+      }, [hospitalState]);
+
+      // --- RENDER ---
+      return React.createElement('div', { className: 'nx-container !h-auto !overflow-visible px-10 pt-5 pb-24 animate-fade-in' },
+          React.createElement(UI.Toast, { show: saveStatus === 'error', message: "Erro ao salvar dados", type: "error" }),
+          React.createElement(UI.Toast, { show: saveStatus === 'saved', message: "Dados salvos com sucesso!", type: "success" }),
+
+          React.createElement('div', { className: 'nx-header print-hidden' },
+              React.createElement('div', { className: 'nx-header-title-group' },
+                  React.createElement('h1', { className: 'nx-header-title' }, "Previsão e Giro"),
+                  React.createElement('p', { className: 'nx-header-subtitle' }, "Simulador Preditivo de Capacidade ", saveStatus === 'saving' && React.createElement('span', { className: 'nx-sync-indicator' }, "SALVANDO..."))
+              ),
+              React.createElement('div', { className: 'flex items-center gap-4' },
+                  React.createElement('div', { className: 'flex flex-col items-end group' },
+                      React.createElement('span', { className: 'text-[8px] font-black text-slate-500 uppercase tracking-widest mb-0.5' }, "Data Alvo"),
+                      React.createElement('input', { type: 'date', value: selectedDate, onChange: function(e) { setSelectedDate(e.target.value); }, className: 'bg-transparent border-0 border-b border-slate-700 text-slate-900 dark:text-white hover:text-cyan-400 focus:border-cyan-400 font-black text-sm outline-none uppercase cursor-pointer transition-colors text-right' })
+                  ),
+                  React.createElement('div', { className: 'relative' },
+                      React.createElement('button', { onClick: function() { setShowMenu(!showMenu); }, className: 'nx-header-btn group' }, React.createElement('i', { className: 'ph-bold ph-list text-2xl group-hover:scale-110 transition-transform' })),
+                      showMenu && React.createElement(React.Fragment, null,
+                          React.createElement('div', { className: 'nx-dropdown-overlay', onClick: function() { setShowMenu(false); } }),
+                          React.createElement('div', { className: 'nx-dropdown-menu' },
+                              React.createElement('button', { onClick: function() { setShowReport(true); setShowMenu(false); }, className: 'nx-dropdown-btn' }, React.createElement('i', { className: 'ph-bold ph-printer text-emerald-500 text-lg' }), " Relatório Diretoria")
+                          )
+                      )
+                  )
+              )
+          ),
+          React.createElement('div', { className: 'nx-header-divider print-hidden' }),
+
+          React.createElement('div', { className: 'flex flex-col gap-8 print-hidden' },
+              // NOVA GRID DE KPIS (6 COLUNAS)
+              React.createElement('div', { className: 'grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 mb-2' },
+                  kpiData.map(function(kpi, idx) {
+                      return React.createElement(UI.KPICard, {
+                          key: idx,
+                          label: kpi.label,
+                          icon: kpi.icon,
+                          theme: kpi.theme,
+                          className: kpi.label === 'Saldo Previsto' && parseInt(kpi.target) < 0 ? 'animate-pulse border-rose-500' : '',
+                          data: [
+                              { value: kpi.today, label: kpi.todayLabel },
+                              { value: kpi.target, label: kpi.targetLabel }
+                          ]
+                      });
+                  })
+              ),
+
+              React.createElement('div', { className: 'flex flex-col gap-8' },
+                  // CHARTS ROW
+                  React.createElement('div', { className: 'grid grid-cols-1 lg:grid-cols-3 gap-8' },
+                      React.createElement('div', { className: 'lg:col-span-2 nx-chart-card !h-full !min-h-[400px] !mb-0 flex flex-col relative z-0' },
+                          React.createElement('div', { className: 'nx-settings-card-header shrink-0' },
+                              React.createElement('h3', { className: 'nx-settings-card-header-title' }, React.createElement('i', { className: 'ph-bold ph-chart-bar text-cyan-500 mr-2' }), " Composição de Capacidade")
+                          ),
+                          React.createElement('div', { className: 'flex-1 w-full min-h-0' },
+                              React.createElement(SafeChart, { component: Charts.CapacityStackedChart, data: Object.values(resultsByClass) })
+                          )
+                      ),
+
+                      React.createElement(UI.Card, { className: 'p-6 h-full min-h-[400px] flex flex-col' },
+                          React.createElement('div', { className: 'nx-settings-card-header shrink-0' },
+                              React.createElement('h3', { className: 'nx-settings-card-header-title' }, React.createElement('i', { className: 'ph-bold ph-calculator text-cyan-500 mr-2' }), " Balanço Final")
+                          ),
+                          React.createElement('div', { className: 'flex-1 flex flex-col justify-center gap-2' },
+                              Object.values(resultsByClass).map(function(res) {
+                                  return React.createElement(StatSlider, { key: res.id, label: res.label, value: res.balance, isReadOnly: true, max: res.capacity, color: res.balance < 0 ? 'rose' : res.color });
+                              })
+                          )
+                      )
+                  ),
+
+                  // CONTROLS ROW
+                  React.createElement('div', { className: 'grid grid-cols-1 lg:grid-cols-3 gap-8' },
+                      // 1. OCUPAÇÃO (SIMULAÇÃO)
+                      React.createElement(UI.Card, { className: 'p-6 flex flex-col h-full' },
+                          React.createElement('div', { className: 'nx-settings-card-header shrink-0' },
+                              React.createElement('div', { className: 'flex flex-col' },
+                                  React.createElement('h3', { className: 'nx-settings-card-header-title' }, React.createElement('i', { className: 'ph-bold ph-bed text-cyan-500 mr-2' }), " Ocupação Atual"),
+                                  React.createElement('span', { className: 'text-[9px] text-slate-500 uppercase font-bold tracking-wider mt-1' }, "Ajuste para simular cenários")
+                              )
+                          ),
+                          React.createElement('div', { className: 'flex-1 overflow-y-auto custom-scrollbar pr-2 max-h-[400px]' },
+                              SECTOR_CONFIG.length > 0 ? SECTOR_CONFIG.map(function(sec) {
+                                  var secState = hospitalState && hospitalState.stats && hospitalState.stats.sectors ? hospitalState.stats.sectors[sec.id] : undefined;
+                                  var realVal = secState ? secState.occupied : 0;
+                                  var effectiveVal = secState ? secState.simulated : 0;
+                                  return React.createElement(StatSlider, { key: sec.id, label: sec.label, max: sec.max, value: effectiveVal, originalAutoValue: realVal, onChange: function(v) { handleSimulate(sec.id, v); }, isReadOnly: false, color: "cyan", icon: "ph-users" });
+                              }) : React.createElement('div', { className: 'text-center text-slate-600 text-xs py-10' }, "Nenhum setor configurado.")
+                          )
+                      ),
+
+                      // 2. PREVISÃO DE ALTAS
+                      React.createElement(UI.Card, { className: 'p-6 flex flex-col h-full' },
+                          React.createElement('div', { className: 'nx-settings-card-header shrink-0' },
+                              React.createElement('div', { className: 'flex flex-col' },
+                                  React.createElement('h3', { className: 'nx-settings-card-header-title' }, React.createElement('i', { className: 'ph-bold ph-trend-up text-emerald-500 mr-2' }), " Previsão de Altas"),
+                                  React.createElement('span', { className: 'text-[9px] text-slate-500 uppercase font-bold tracking-wider mt-1' }, "Saídas estimadas por setor")
+                              )
+                          ),
+                          React.createElement('div', { className: 'flex-1 overflow-y-auto custom-scrollbar pr-2 max-h-[400px]' },
+                              SECTOR_CONFIG.length > 0 ? SECTOR_CONFIG.map(function(sec) {
+                                  var secState = hospitalState && hospitalState.stats && hospitalState.stats.sectors ? hospitalState.stats.sectors[sec.id] : undefined;
+                                  var effectiveOccupancy = secState ? secState.simulated : 0;
+                                  return React.createElement(StatSlider, { key: sec.id, label: sec.label, max: effectiveOccupancy, value: dailyData.forecast[sec.id], onChange: function(val) { handleDataChange('forecast', sec.id, val); }, color: "emerald", icon: "ph-sign-out" });
+                              }) : React.createElement('div', { className: 'text-center text-slate-600 text-xs py-10' }, "Nenhum setor configurado.")
+                          )
+                      ),
+
+                      // 3. PREVISÃO DE ENTRADAS
+                      React.createElement(UI.Card, { className: 'p-6 flex flex-col h-full' },
+                          React.createElement('div', { className: 'nx-settings-card-header shrink-0' },
+                              React.createElement('div', { className: 'flex flex-col' },
+                                  React.createElement('h3', { className: 'nx-settings-card-header-title' }, React.createElement('i', { className: 'ph-bold ph-sign-in text-amber-500 mr-2' }), " Demanda / Reservas"),
+                                  React.createElement('span', { className: 'text-[9px] text-slate-500 uppercase font-bold tracking-wider mt-1' }, "Entradas previstas (Bloco, PA...)")
+                              )
+                          ),
+                          React.createElement('div', { className: 'flex-1 overflow-y-auto custom-scrollbar pr-2 max-h-[400px]' },
+                              visibleFlows.length > 0 ? (
+                                  visibleFlows.map(function(flow) {
+                                      var flowType = flow.type;
+                                      var normType = Utils.normalize(flowType);
+                                      var limit = 0;
+
+                                      if (hospitalState && hospitalState.stats && hospitalState.stats.classes && hospitalState.stats.classes[normType] && hospitalState.stats.classes[normType].capacity > 0) {
+                                          limit = hospitalState.stats.classes[normType].capacity;
+                                      } else {
+                                          if (['CTI','UTI','CETIPE'].some(function(k) { return normType.includes(k); })) {
+                                              limit = (hospitalState && hospitalState.stats && hospitalState.stats.totals && hospitalState.stats.totals.macroCti) || 50;
+                                          } else {
+                                              limit = (hospitalState && hospitalState.stats && hospitalState.stats.totals && hospitalState.stats.totals.macroUi) || 100;
+                                          }
+                                      }
+
+                                      return React.createElement(StatSlider, {
+                                          key: flow.id,
+                                          label: flow.label,
+                                          value: (dailyData.reserves && dailyData.reserves[flow.id]),
+                                          onChange: function(val) { handleDataChange('reserves', flow.id, val); },
+                                          max: limit,
+                                          color: "amber",
+                                          icon: "ph-ticket"
+                                      });
+                                  })
+                              ) : (
+                                  React.createElement('div', { className: 'flex flex-col items-center justify-center h-full text-slate-600 opacity-60' },
+                                      React.createElement('i', { className: 'ph-bold ph-warning-circle text-3xl mb-2' }),
+                                      React.createElement('p', { className: 'text-[10px] font-bold uppercase tracking-widest' }, "Nenhuma regra ativa")
+                                  )
+                              )
+                          )
+                      )
+                  )
+              ),
+
+              // MODAL RELATÓRIO IMPRESSÃO (ESTILO A4 CINZA)
+              React.createElement(UI.Modal, { isOpen: showReport, onClose: function() { setShowReport(false); }, size: "large", title: "Relatório Gerencial", className: "bg-[var(--nx-bg-surface)] text-[var(--nx-text-primary)]" },
+                  ReportPage && React.createElement(ReportPage, {
+                      headerProps: {
+                          title: "Relatório de Previsão e Capacidade",
+                          date: new Date(selectedDate).toLocaleDateString('pt-BR', { timeZone: 'UTC' }),
+                          userName: user.name
+                      },
+                      footerProps: {
+                          text: "Relatório gerado digitalmente por SysGestão. Uso interno.",
+                          pageInfo: new Date().toLocaleString()
+                      },
+                      className: "h-auto overflow-y-auto bg-white text-black"
+                  },
+                      // KPIS SIMPLIFICADOS
+                      React.createElement('div', { className: 'grid grid-cols-6 gap-2 mb-6 border-b-2 border-black pb-6' },
+                          kpiData.map(function(kpi, idx) {
+                              return React.createElement('div', { key: idx, className: 'border border-black p-2 flex flex-col items-center justify-center' },
+                                  React.createElement('span', { className: 'text-[8px] font-bold uppercase tracking-widest mb-1 text-center' }, kpi.label),
+                                  React.createElement('span', { className: 'text-lg font-black' }, kpi.today),
+                                  React.createElement('span', { className: 'text-[8px] font-bold uppercase mt-1 text-center' }, "Meta: ", kpi.target)
+                              );
+                          })
+                      ),
+
+                      // CENÁRIO REAL (HOJE)
+                      React.createElement('div', { className: 'mb-6' },
+                          React.createElement('h3', { className: 'text-xs font-black uppercase tracking-widest border-b border-black mb-3 pb-1' }, "Cenário Real (Hoje)"),
+
+                          React.createElement('div', { className: 'grid grid-cols-4 gap-4 mb-4 text-center' },
+                              React.createElement('div', { className: 'report-box' },
+                                  React.createElement('span', { className: 'report-label' }, "Admissões"),
+                                  React.createElement('span', { className: 'report-value' }, reportStats.admissions || 0)
+                              ),
+                              React.createElement('div', { className: 'report-box' },
+                                  React.createElement('span', { className: 'report-label' }, "Transferências"),
+                                  React.createElement('span', { className: 'report-value' }, reportStats.transfers || 0)
+                              ),
+                              React.createElement('div', { className: 'report-box' },
+                                  React.createElement('span', { className: 'report-label' }, "Altas UI"),
+                                  React.createElement('span', { className: 'report-value' }, reportStats.dischargesUI || 0)
+                              ),
+                              React.createElement('div', { className: 'report-box' },
+                                  React.createElement('span', { className: 'report-label' }, "Altas CTI"),
+                                  React.createElement('span', { className: 'report-value' }, reportStats.dischargesCTI || 0)
+                              )
+                          ),
+
+                          React.createElement('div', { className: 'grid grid-cols-2 gap-6' },
+                              // UI SECTORS
+                              React.createElement('div', null,
+                                  React.createElement('h4', { className: 'text-[9px] font-bold uppercase mb-2' }, "Ocupação Internação (UI)"),
+                                  React.createElement('table', { className: 'w-full text-[9px] border-collapse' },
+                                      React.createElement('thead', null, React.createElement('tr', { className: 'border-b border-black text-left' }, React.createElement('th', { className: 'pb-1' }, "Setor"), React.createElement('th', { className: 'pb-1 text-right' }, "Ocup/Cap"), React.createElement('th', { className: 'pb-1 text-right' }, "%"))),
+                                      React.createElement('tbody', null,
+                                          sectorBreakdown.ui.map(function(s) {
+                                              return React.createElement('tr', { key: s.id, className: 'border-b border-gray-200' },
+                                                  React.createElement('td', { className: 'py-1 font-bold' }, s.label),
+                                                  React.createElement('td', { className: 'py-1 text-right' }, s.occupied + '/' + s.capacity),
+                                                  React.createElement('td', { className: 'py-1 text-right font-bold' }, (s.capacity > 0 ? Math.round((s.occupied / s.capacity) * 100) : 0) + '%')
+                                              );
+                                          })
+                                      )
+                                  )
+                              ),
+                              // CTI SECTORS
+                              React.createElement('div', null,
+                                  React.createElement('h4', { className: 'text-[9px] font-bold uppercase mb-2' }, "Ocupação Intensiva (CTI)"),
+                                  React.createElement('table', { className: 'w-full text-[9px] border-collapse' },
+                                      React.createElement('thead', null, React.createElement('tr', { className: 'border-b border-black text-left' }, React.createElement('th', { className: 'pb-1' }, "Setor"), React.createElement('th', { className: 'pb-1 text-right' }, "Ocup/Cap"), React.createElement('th', { className: 'pb-1 text-right' }, "%"))),
+                                      React.createElement('tbody', null,
+                                          sectorBreakdown.cti.map(function(s) {
+                                              return React.createElement('tr', { key: s.id, className: 'border-b border-gray-200' },
+                                                  React.createElement('td', { className: 'py-1 font-bold' }, s.label),
+                                                  React.createElement('td', { className: 'py-1 text-right' }, s.occupied + '/' + s.capacity),
+                                                  React.createElement('td', { className: 'py-1 text-right font-bold' }, (s.capacity > 0 ? Math.round((s.occupied / s.capacity) * 100) : 0) + '%')
+                                              );
+                                          })
+                                      )
+                                  )
+                              )
+                          )
+                      ),
+
+                      React.createElement('div', { className: 'w-full h-px bg-black mb-6' }),
+
+                      // DADOS DE PREVISÃO (INPUTS)
+                      React.createElement('div', { className: 'mb-6' },
+                          React.createElement('h3', { className: 'text-xs font-black uppercase tracking-widest border-b border-black mb-3 pb-1' }, "Previsão e Metas (Target)"),
+                          React.createElement('div', { className: 'grid grid-cols-2 gap-6' },
+                              React.createElement('div', null,
+                                  React.createElement('h4', { className: 'text-[9px] font-bold uppercase mb-2' }, "Previsão de Altas (Target)"),
+                                  React.createElement('table', { className: 'w-full text-[9px] border-collapse' },
+                                      React.createElement('thead', null, React.createElement('tr', { className: 'border-b border-black text-left' }, React.createElement('th', { className: 'pb-1' }, "Setor"), React.createElement('th', { className: 'pb-1 text-right' }, "Valor"))),
+                                      React.createElement('tbody', null,
+                                          Object.entries(dailyData.forecast).map(function(entry) {
+                                              var k = entry[0]; var v = entry[1];
+                                              if (!v || v == 0) return null;
+                                              return React.createElement('tr', { key: k, className: 'border-b border-gray-200' },
+                                                  React.createElement('td', { className: 'py-1 font-bold uppercase' }, k),
+                                                  React.createElement('td', { className: 'py-1 text-right font-mono font-bold' }, v)
+                                              );
+                                          }),
+                                          Object.keys(dailyData.forecast).length === 0 && React.createElement('tr', null, React.createElement('td', { colSpan: '2', className: 'py-1 text-center italic text-gray-500' }, "Nenhuma alta prevista"))
+                                      )
+                                  )
+                              ),
+                              React.createElement('div', null,
+                                  React.createElement('h4', { className: 'text-[9px] font-bold uppercase mb-2' }, "Demanda / Reservas (Target)"),
+                                  React.createElement('table', { className: 'w-full text-[9px] border-collapse' },
+                                      React.createElement('thead', null, React.createElement('tr', { className: 'border-b border-black text-left' }, React.createElement('th', { className: 'pb-1' }, "Fluxo"), React.createElement('th', { className: 'pb-1 text-right' }, "Valor"))),
+                                      React.createElement('tbody', null,
+                                          Object.entries(dailyData.reserves).map(function(entry) {
+                                              var k = entry[0]; var v = entry[1];
+                                              if (!v || v == 0) return null;
+                                              var flowName = structure.flows.find(function(f) { return f.id === k; });
+                                              flowName = (flowName && flowName.label) || k;
+                                              return React.createElement('tr', { key: k, className: 'border-b border-gray-200' },
+                                                  React.createElement('td', { className: 'py-1 font-bold uppercase' }, flowName),
+                                                  React.createElement('td', { className: 'py-1 text-right font-mono font-bold' }, v)
+                                              );
+                                          }),
+                                          Object.keys(dailyData.reserves).length === 0 && React.createElement('tr', null, React.createElement('td', { colSpan: '2', className: 'py-1 text-center italic text-gray-500' }, "Nenhuma demanda registrada"))
+                                      )
+                                  )
+                              )
+                          )
+                      ),
+
+                      React.createElement('div', { className: 'w-full h-px bg-black mb-6' }),
+
+                      // GRÁFICO
+                      React.createElement('div', { className: 'mb-6 page-break-avoid' },
+                          React.createElement('h3', { className: 'text-xs font-black uppercase tracking-widest mb-3' }, "Balanço de Capacidade"),
+                          React.createElement('div', { className: 'w-full h-[250px] border border-gray-300 p-2 chart-grayscale' },
+                              React.createElement(SafeChart, { component: Charts.CapacityStackedChart, data: Object.values(resultsByClass) })
+                          )
+                      )
+                  ),
+
+                  React.createElement('div', { className: 'fixed bottom-8 right-8 print-hidden' },
+                      React.createElement('button', { onClick: function() { window.print(); }, className: 'btn-comet px-8 py-4 text-white font-black uppercase text-xs tracking-widest flex items-center justify-center gap-2' },
+                          React.createElement('i', { className: 'ph-bold ph-printer text-lg' }), " Imprimir"
+                      )
+                  )
+              )
+          )
+      );
+    };
+
+    window.App.Forecast = Forecast;
+  })();
+</script>

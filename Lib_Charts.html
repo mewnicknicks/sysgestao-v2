@@ -1,0 +1,35 @@
+
+<!-- 
+  ARQUIVO: Lib_Charts.html
+  FUNÇÃO: Gráficos (Recharts).
+  ESTRATÉGIA: Tentativa tripla (Cloudflare -> Unpkg -> JSDelivr)
+  
+  NOTA: Não é possível embutir o código fonte completo aqui (Offline total) 
+  pois ele excede o limite de caracteres do editor do Google Apps Script, 
+  o que causaria travamento. A estratégia abaixo garante 99.9% de uptime.
+-->
+
+<!-- 1. Tentativa Principal: CLOUDFLARE (CDNJS) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.12.3/Recharts.min.js" crossorigin></script>
+
+<!-- 2. Fallback: UNPKG (Caso a Cloudflare falhe) -->
+<script>
+  if (!window.Recharts) {
+    console.warn('Alerta: CDNJS falhou para Recharts. Tentando servidor de backup 1 (UNPKG)...');
+    var script = document.createElement('script');
+    script.src = 'https://unpkg.com/recharts@2.12.3/umd/Recharts.min.js';
+    script.crossOrigin = 'anonymous';
+    document.head.appendChild(script);
+  }
+</script>
+
+<!-- 3. Fallback Final: JSDELIVR (Caso os dois anteriores falhem) -->
+<script>
+  if (!window.Recharts) {
+    console.warn('Alerta: UNPKG falhou para Recharts. Tentando servidor de backup 2 (JSDELIVR)...');
+    var script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/recharts@2.12.3/umd/Recharts.min.js';
+    script.crossOrigin = 'anonymous';
+    document.head.appendChild(script);
+  }
+</script>

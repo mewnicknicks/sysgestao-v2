@@ -1,0 +1,1107 @@
+
+<script>
+  (function() {
+    window.App = window.App || {};
+
+    var SettingsView = function(props) {
+      var user = props.user;
+      var usersList = props.usersList;
+      var structure = props.structure;
+      var actions = props.actions;
+      var UI = props.UI;
+      var Service = props.Service;
+      var Hooks = props.Hooks;
+
+      var activeTabState = React.useState('USERS');
+      var activeTab = activeTabState[0];
+      var setActiveTab = activeTabState[1];
+      
+      // UX OTIMISTA & BUFFER
+      var optimisticResult = Hooks.useOptimisticAction();
+      var isOptimistic = optimisticResult.isOptimistic;
+      var runOptimistic = optimisticResult.run;
+
+      // ESTADOS LOCAIS (Sync com Context via Hook Otimista)
+      var usersLocalState = Hooks.useLocalState(usersList || [], isOptimistic);
+      var users = usersLocalState[0];
+      var setUsers = usersLocalState[1];
+      var bedsLocalState = Hooks.useLocalState(structure && structure.beds ? structure.beds : [], isOptimistic);
+      var beds = bedsLocalState[0];
+      var setBeds = bedsLocalState[1];
+      var sectorsLocalState = Hooks.useLocalState(structure && structure.sectors ? structure.sectors : [], isOptimistic);
+      var sectors = sectorsLocalState[0];
+      var setSectors = sectorsLocalState[1];
+      var insurancesLocalState = Hooks.useLocalState(structure && structure.insurances ? structure.insurances : [], isOptimistic);
+      var insurances = insurancesLocalState[0];
+      var setInsurances = insurancesLocalState[1];
+      var specialtiesLocalState = Hooks.useLocalState(structure && structure.specialties ? structure.specialties : [], isOptimistic);
+      var specialties = specialtiesLocalState[0];
+      var setSpecialties = specialtiesLocalState[1];
+      
+      // AI Config State
+      var aiConfigState = React.useState({
+          MODEL: (structure && structure.aiConfig && structure.aiConfig.MODEL) ? structure.aiConfig.MODEL : 'gemini-3-flash-preview',
+          PROMPT_SHIFT: (structure && structure.aiConfig && structure.aiConfig.PROMPT_SHIFT) ? structure.aiConfig.PROMPT_SHIFT : '',
+          PROMPT_EDITOR: (structure && structure.aiConfig && structure.aiConfig.PROMPT_EDITOR) ? structure.aiConfig.PROMPT_EDITOR : ''
+      });
+      var aiConfig = aiConfigState[0];
+      var setAiConfig = aiConfigState[1];
+      
+      var userFormDataState = React.useState({ id: '', name: '', matricula: '', leader: '', role: '', isAdmin: 'NAO' });
+      var userFormData = userFormDataState[0];
+      var setUserFormData = userFormDataState[1];
+      var isUserEditingState = React.useState(false);
+      var isUserEditing = isUserEditingState[0];
+      var setIsUserEditing = isUserEditingState[1];
+      
+      var sectorModeState = React.useState('BEDS');
+      var sectorMode = sectorModeState[0];
+      var setSectorMode = sectorModeState[1];
+      
+      // --- FORM DATA LEITOS V8 ---
+      var bedFormDataState = React.useState({ 
+          number: '', sector: '', type: '', 
+          sla: 120, isStrategic: false, isCti: false 
+      });
+      var bedFormData = bedFormDataState[0];
+      var setBedFormData = bedFormDataState[1];
+      var isBedEditingState = React.useState(false);
+      var isBedEditing = isBedEditingState[0];
+      var setIsBedEditing = isBedEditingState[1];
+      
+      var newSectorNameState = React.useState('');
+      var newSectorName = newSectorNameState[0];
+      var setNewSectorName = newSectorNameState[1];
+      var newInsuranceNameState = React.useState('');
+      var newInsuranceName = newInsuranceNameState[0];
+      var setNewInsuranceName = newInsuranceNameState[1];
+      var newSpecialtyNameState = React.useState('');
+      var newSpecialtyName = newSpecialtyNameState[0];
+      var setNewSpecialtyName = newSpecialtyNameState[1];
+      
+      var showMenuState = React.useState(false);
+      var showMenu = showMenuState[0];
+      var setShowMenu = showMenuState[1];
+      var submitResult = (UI.useSubmit ? UI.useSubmit() : { isSubmitting: false, submit: async function(fn) { return await fn(); } });
+      var isSubmitting = submitResult.isSubmitting;
+      var submit = submitResult.submit;
+      
+      // --- ESTADOS DIAGNÓSTICO & RESET ---
+      var diagResultState = React.useState(null);
+      var diagResult = diagResultState[0];
+      var setDiagResult = diagResultState[1];
+      var showResetModalState = React.useState(false);
+      var showResetModal = showResetModalState[0];
+      var setShowResetModal = showResetModalState[1];
+      var resetConfirmTextState = React.useState('');
+      var resetConfirmText = resetConfirmTextState[0];
+      var setResetConfirmText = resetConfirmTextState[1];
+      var isResettingState = React.useState(false);
+      var isResetting = isResettingState[0];
+      var setIsResetting = isResettingState[1];
+
+      // DnD State
+      var dragItem = React.useRef(null);
+      var dragOverInfoState = React.useState({ index: null, position: null });
+      var dragOverInfo = dragOverInfoState[0];
+      var setDragOverInfo = dragOverInfoState[1];
+
+      // --- DIAGNÓSTICO ---
+      var handleDiagnostic = async function() {
+          setDiagResult(null);
+          if(UI.Toast) UI.Toast.show("Executando diagnóstico...", "warning");
+          
+          try {
+              var res = await actions.diagnoseSystem();
+              if (res.status === 'SUCCESS') {
+                  setDiagResult({ success: true, message: 'Conexão Estável!\nBanco de Dados: ' + res.dbName });
+                  if(UI.Toast) UI.Toast.show("Diagnóstico OK", "success");
+              } else {
+                  var errorMsg = res.error || 'Resposta inesperada do servidor.';
+                  setDiagResult({ success: false, message: 'Erro: ' + errorMsg });
+                  if(UI.Toast) UI.Toast.show("Falha no diagnóstico", "error");
+              }
+          } catch(e) { 
+              var errorMsg = e.message || 'Não foi possível conectar ao servidor.';
+              setDiagResult({ success: false, message: 'Erro Fatal: ' + errorMsg });
+          }
+      };
+
+      // --- FACTORY RESET (DISASTER RECOVERY) ---
+      var handleFactoryReset = async function() {
+          if (!resetConfirmText || resetConfirmText.toUpperCase() !== 'CONFIRMAR') {
+              if (UI.Toast && UI.Toast.show) UI.Toast.show("❌ Digite 'CONFIRMAR' corretamente para prosseguir.", "warning");
+              return;
+          }
+          
+          var okReset = await UI.confirmThen("⚠️ ÚLTIMA CHANCE: Todos os dados de pacientes serão ARQUIVADOS e um novo banco será criado. Continuar?");
+          if (!okReset) {
+              if (UI.Toast && UI.Toast.show) UI.Toast.show("❌ Reset cancelado.", "info");
+              return;
+          }
+
+          setIsResetting(true);
+          if (UI.Toast && UI.Toast.show) UI.Toast.show("⏳ Executando reset... Isso pode levar alguns segundos.", "loading");
+          
+          try {
+              var adminRef = Service.Admin;
+              var factoryResetFn = adminRef ? adminRef.factoryReset : null;
+              var res = factoryResetFn ? await factoryResetFn(user) : null;
+              
+              if (res && res.status === 'SUCCESS') {
+                  if (UI.Toast && UI.Toast.show) UI.Toast.show('✅ Banco de dados resetado! ID novíssimo: ' + res.newId, "success");
+                  setTimeout(function() { window.top.location.reload(); }, 2000);
+              } else {
+                  throw new Error((res && res.message) ? res.message : "Erro desconhecido durante o reset");
+              }
+          } catch (e) {
+              console.error("Factory Reset Error:", e);
+              if (UI.Toast && UI.Toast.show) UI.Toast.show('❌ Erro no reset: ' + e.message, "error");
+              setIsResetting(false);
+              setShowResetModal(false);
+              setResetConfirmText('');
+          }
+      };
+
+      // --- HANDLERS USUÁRIOS ---
+      var handleUserSubmit = function(e) {
+          e.preventDefault();
+          var id = userFormData.id || String(Date.now());
+          var newUser = Object.assign({}, userFormData, { id: id });
+          
+          runOptimistic(
+              function() {
+                  var updated = isUserEditing ? users.map(function(u) { return u.id === id ? newUser : u; }) : [newUser].concat(users);
+                  setUsers(updated);
+                  setUserFormData({id:'', name:'', matricula:'', leader:'', role:'', isAdmin: 'NAO'});
+                  setIsUserEditing(false);
+                  if(UI.Toast) UI.Toast.show("Usuário salvo.");
+              },
+              function() { return actions.saveUser(newUser); },
+              {
+                  onError: function(e) {
+                      setUsers(usersList);
+                      if (UI.Toast && UI.Toast.show) UI.Toast.show('❌ Erro: ' + e.message, 'error');
+                  }
+              }
+          );
+      };
+
+      var handleDeleteUser = async function(u) {
+          var ok = await UI.confirmThen('Excluir usuário ' + u.name + '?');
+          if (!ok) return;
+          runOptimistic(
+              function() {
+                  var updated = users.filter(function(it) { return it.id !== u.id; });
+                  setUsers(updated);
+                  if(UI.Toast) UI.Toast.show("Usuário removido.");
+              },
+              function() { return actions.deleteUser(u.id); },
+              {
+                  onError: function(e) {
+                      setUsers(usersList);
+                      if (UI.Toast && UI.Toast.show) UI.Toast.show('❌ Erro: ' + e.message, 'error');
+                  }
+              }
+          );
+      };
+
+      // --- HANDLERS LEITOS (V8 JSON) ---
+      var handleBedSubmit = function(e) {
+          e.preventDefault();
+          
+          var newBed = {
+              id: bedFormData.number,
+              number: bedFormData.number,
+              sector: bedFormData.sector,
+              type: bedFormData.type,
+              sla: bedFormData.sla,
+              isStrategic: bedFormData.isStrategic,
+              isCti: bedFormData.isCti,
+              _rawJson: JSON.stringify({
+                  sla_min: parseInt(bedFormData.sla),
+                  is_strategic: bedFormData.isStrategic,
+                  is_cti: bedFormData.isCti
+              })
+          };
+          
+          runOptimistic(
+              function() {
+                  var updated = beds.filter(function(b) { return b.number !== newBed.number; });
+                  updated.push(newBed);
+                  updated.sort(function(a,b) { return String(a.number).localeCompare(String(b.number), undefined, {numeric: true}); });
+                  
+                  setBeds(updated);
+                  setBedFormData({ number: '', sector: '', type: '', sla: 120, isStrategic: false, isCti: false });
+                  setIsBedEditing(false);
+                  if(UI.Toast) UI.Toast.show("Leito salvo (V8).");
+              },
+              function() { return actions.saveStructureBed(newBed); },
+              {
+                  onError: function(e) {
+                      setBeds(structure && structure.beds ? structure.beds : []);
+                      if (UI.Toast && UI.Toast.show) UI.Toast.show('❌ Erro: ' + e.message, 'error');
+                  }
+              }
+          );
+      };
+
+      var prepareEditBed = function(bed) {
+          setBedFormData({
+              number: bed.number,
+              sector: bed.sector,
+              type: bed.type,
+              sla: bed.sla || 120,
+              isStrategic: !!bed.isStrategic,
+              isCti: !!bed.isCti
+          });
+          setIsBedEditing(true);
+      };
+
+      var handleDeleteBed = async function(bedNum) {
+          var ok = await UI.confirmThen('Excluir leito ' + bedNum + '?');
+          if (!ok) return;
+          runOptimistic(
+              function() {
+                  var updated = beds.filter(function(it) { return it.number !== bedNum; });
+                  setBeds(updated);
+                  if(UI.Toast) UI.Toast.show("Leito excluído.");
+              },
+              function() { return actions.deleteStructureBed(bedNum); },
+              {
+                  onError: function(e) {
+                      setBeds(structure && structure.beds ? structure.beds : []);
+                      if (UI.Toast && UI.Toast.show) UI.Toast.show('❌ Erro: ' + e.message, 'error');
+                  }
+              }
+          );
+      };
+
+      // --- HANDLERS SETORES ---
+      var handleCreateSector = function(e) {
+          e.preventDefault();
+          var name = newSectorName.toUpperCase().trim();
+          if (!name || sectors.find(function(s) { return s.name === name; })) return;
+          
+          var newOrder = (sectors.length > 0 ? Math.max.apply(null, sectors.map(function(s) { return s.order || 0; })) : 0) + 10;
+          var newSec = { name: name, order: newOrder, beds: [] };
+
+          runOptimistic(
+              function() {
+                  var updated = sectors.concat([newSec]);
+                  setSectors(updated);
+                  setNewSectorName('');
+                  if(UI.Toast) UI.Toast.show("Setor criado.");
+              },
+              function() { return actions.saveSectorOrder(name, newOrder); },
+              {
+                  onError: function(e) {
+                      setSectors(structure && structure.sectors ? structure.sectors : []);
+                      if (UI.Toast && UI.Toast.show) UI.Toast.show('❌ Erro: ' + e.message, 'error');
+                  }
+              }
+          );
+      };
+
+      var handleDeleteSector = async function(name) {
+          var ok = await UI.confirmThen('Atenção: Excluir o setor "' + name + '" e todos os seus leitos associados?');
+          if (!ok) return;
+          runOptimistic(
+              function() {
+                  var updatedSectors = sectors.filter(function(s) { return s.name !== name; });
+                  var updatedBeds = beds.filter(function(b) { return b.sector !== name; });
+                  setSectors(updatedSectors);
+                  setBeds(updatedBeds);
+                  if(UI.Toast) UI.Toast.show("Setor excluído.");
+              },
+              function() { return actions.deleteSector(name); },
+              {
+                  onError: function(e) {
+                      setSectors(structure && structure.sectors ? structure.sectors : []);
+                      setBeds(structure && structure.beds ? structure.beds : []);
+                      if (UI.Toast && UI.Toast.show) UI.Toast.show('❌ Erro: ' + e.message, 'error');
+                  }
+              }
+          );
+      };
+
+      // --- HANDLERS CONVÊNIOS ---
+      var handleCreateInsurance = function(e) {
+          e.preventDefault();
+          var name = newInsuranceName.toUpperCase().trim();
+          if (!name || insurances.find(function(i) { return i.name === name; })) return;
+          var newOrder = (insurances.length > 0 ? Math.max.apply(null, insurances.map(function(i) { return i.order || 0; })) : 0) + 10;
+          var newIns = { name: name, order: newOrder };
+
+          runOptimistic(
+              function() {
+                  var updated = insurances.concat([newIns]);
+                  setInsurances(updated);
+                  setNewInsuranceName('');
+                  if(UI.Toast) UI.Toast.show("Convênio criado.");
+              },
+              function() { return actions.saveInsurance(newIns); },
+              {
+                  onError: function(e) {
+                      setInsurances(structure && structure.insurances ? structure.insurances : []);
+                      if (UI.Toast && UI.Toast.show) UI.Toast.show('❌ Erro: ' + e.message, 'error');
+                  }
+              }
+          );
+      };
+
+      var handleDeleteInsurance = async function(name) {
+          var ok = await UI.confirmThen("Excluir este convênio?");
+          if (!ok) return;
+          runOptimistic(
+              function() {
+                  var updated = insurances.filter(function(i) { return i.name !== name; });
+                  setInsurances(updated);
+                  if(UI.Toast) UI.Toast.show("Convênio excluído.");
+              },
+              function() { return actions.deleteInsurance(name); },
+              {
+                  onError: function(e) {
+                      setInsurances(structure && structure.insurances ? structure.insurances : []);
+                      if (UI.Toast && UI.Toast.show) UI.Toast.show('❌ Erro: ' + e.message, 'error');
+                  }
+              }
+          );
+      };
+
+      // --- HANDLERS ESPECIALIDADES ---
+      var handleCreateSpecialty = function(e) {
+          e.preventDefault();
+          var name = newSpecialtyName.toUpperCase().trim();
+          if (!name || specialties.find(function(s) { return s.name === name; })) return;
+          var newOrder = (specialties.length > 0 ? Math.max.apply(null, specialties.map(function(s) { return s.order || 0; })) : 0) + 10;
+          var newSpec = { name: name, order: newOrder };
+
+          runOptimistic(
+              function() {
+                  var updated = specialties.concat([newSpec]);
+                  setSpecialties(updated);
+                  setNewSpecialtyName('');
+                  if(UI.Toast) UI.Toast.show("Especialidade criada.");
+              },
+              function() { return actions.saveSpecialty(newSpec); },
+              {
+                  onError: function(e) {
+                      setSpecialties(structure && structure.specialties ? structure.specialties : []);
+                      if (UI.Toast && UI.Toast.show) UI.Toast.show('❌ Erro: ' + e.message, 'error');
+                  }
+              }
+          );
+      };
+
+      var handleDeleteSpecialty = async function(name) {
+          var ok = await UI.confirmThen("Excluir esta especialidade?");
+          if (!ok) return;
+          runOptimistic(
+              function() {
+                  var updated = specialties.filter(function(s) { return s.name !== name; });
+                  setSpecialties(updated);
+                  if(UI.Toast) UI.Toast.show("Especialidade excluída.");
+              },
+              function() { return actions.deleteSpecialty(name); },
+              {
+                  onError: function(e) {
+                      setSpecialties(structure && structure.specialties ? structure.specialties : []);
+                      if (UI.Toast && UI.Toast.show) UI.Toast.show('❌ Erro: ' + e.message, 'error');
+                  }
+              }
+          );
+      };
+      
+      // --- HANDLER IA CONFIG ---
+      var handleSaveAiConfig = async function() {
+          if(UI.Toast) UI.Toast.show("Salvando configurações de IA...", "info");
+          try {
+              await actions.saveAiConfig('MODEL', aiConfig.MODEL);
+              await actions.saveAiConfig('PROMPT_SHIFT', aiConfig.PROMPT_SHIFT);
+              await actions.saveAiConfig('PROMPT_EDITOR', aiConfig.PROMPT_EDITOR);
+              if(UI.Toast) UI.Toast.show("Configurações de IA salvas!", "success");
+          } catch(e) {
+              if(UI.Toast) UI.Toast.show("Erro ao salvar IA config.", "error");
+          }
+      };
+
+      // --- DND GENÉRICO ---
+      var handleDragStart = function(e, index) { dragItem.current = index; e.dataTransfer.effectAllowed = 'move'; e.target.classList.add('opacity-40'); };
+      var handleDragOver = function(e, index) { e.preventDefault(); if (dragItem.current === index) { setDragOverInfo({ index: null, position: null }); return; } var rect = e.currentTarget.getBoundingClientRect(); var position = (e.clientY - rect.top) < (rect.bottom - rect.top) / 2 ? 'top' : 'bottom'; setDragOverInfo({ index: index, position: position }); };
+      var handleDragEnd = function(e) { e.target.classList.remove('opacity-40'); setDragOverInfo({ index: null, position: null }); };
+      
+      var handleDropGeneric = function(e, list, setList, saveFn, type) {
+          e.preventDefault();
+          var draggedIndex = dragItem.current;
+          var targetIndex = dragOverInfo.index;
+          var position = dragOverInfo.position;
+          if (draggedIndex === null || targetIndex === null) return;
+
+          var sorted = list.slice().sort(function(a,b) { return (a.order || 0) - (b.order || 0); });
+          var itemToMove = sorted[draggedIndex];
+          sorted.splice(draggedIndex, 1);
+          var insertAtIndex = targetIndex;
+          if (draggedIndex < targetIndex) insertAtIndex = targetIndex - 1;
+          if (position === 'bottom') insertAtIndex += 1;
+
+          sorted.splice(insertAtIndex, 0, itemToMove);
+          var updated = sorted.map(function(s, i) { return Object.assign({}, s, { order: (i + 1) * 10 }); });
+          
+          runOptimistic(
+              function() {
+                  setList(updated);
+                  if(UI.Toast) UI.Toast.show("Ordem atualizada.");
+              },
+              async function() {
+                  for (var j = 0; j < updated.length; j++) {
+                      var s = updated[j];
+                      await saveFn(type === 'SECTOR' ? s.name : s, s.order); 
+                  }
+              },
+              {
+                  onError: function(e) {
+                      setList(list);
+                      if (UI.Toast && UI.Toast.show) UI.Toast.show('❌ Erro: ' + e.message, 'error');
+                  }
+              }
+          );
+          setDragOverInfo({ index: null, position: null }); dragItem.current = null;
+      };
+
+      var navTabs = [
+          { id: 'USERS', label: 'Equipe', icon: 'ph-users-three' },
+          { id: 'SECTORS', label: 'Infraestrutura', icon: 'ph-hospital' },
+          { id: 'INSURANCES', label: 'Convênios', icon: 'ph-identification-card' },
+          { id: 'SPECIALTIES', label: 'Especialidades', icon: 'ph-stethoscope' },
+          { id: 'AI', label: 'Inteligência Art.', icon: 'ph-robot' },
+          { id: 'SYSTEM', label: 'Sistema', icon: 'ph-gear' }
+      ];
+
+      var permissionsList = [
+          {id: 'GLOBAL', label: 'Cenário Global'},
+          {id: 'BED_MAP', label: 'Mapa de Leitos'},
+          {id: 'PATIENT_REGISTER', label: 'Registro Pacientes'},
+          {id: 'TRANSFER', label: 'Transferências'},
+          {id: 'PA_CONTROL', label: 'Controle P.A.'},
+          {id: 'DISCHARGE_DEATH', label: 'Altas / Óbitos'},
+          {id: 'FORECAST', label: 'Previsão'},
+          {id: 'SHIFT_HANDOVER', label: 'Plantão'},
+          {id: 'REPORTS', label: 'Relatórios'},
+          {id: 'AUDIT_LOG', label: 'Auditoria'},
+          {id: 'SETTINGS', label: 'Configurações'}
+      ];
+
+      // --- HELPERS ---
+      var _classTabBtn = function(mode) { return 'nx-settings-tab-btn ' + (sectorMode === mode ? 'active' : ''); };
+      var _classTabActive = function(tabId) { return 'pb-4 text-xs font-black uppercase tracking-[0.2em] flex items-center gap-2 transition-all relative ' + (activeTab === tabId ? 'text-blue-900 dark:text-white' : 'text-blue-600/60 hover:text-blue-400'); };
+
+      // --- RENDER: USERS TAB ---
+      var renderUsersTab = function() {
+          if (activeTab !== 'USERS') return null;
+          return React.createElement('div', { className: 'nx-settings-grid' },
+              // FORMULÁRIO
+              React.createElement('div', { className: 'nx-settings-form-col' },
+                  React.createElement(UI.Card, { className: 'p-8 h-full overflow-y-auto custom-scrollbar' },
+                      React.createElement('div', { className: 'nx-settings-card-header' },
+                          React.createElement('i', { className: 'ph-bold ph-user-gear nx-settings-card-header-icon' }),
+                          React.createElement('h2', { className: 'nx-settings-card-header-title' }, "Gerenciar Usuário")
+                      ),
+                      React.createElement('form', { onSubmit: handleUserSubmit },
+                          React.createElement('div', { className: 'mb-5' },
+                              React.createElement(UI.Input, { label: 'Nome Completo', name: 'name', value: userFormData.name, onChange: function(e) { setUserFormData(Object.assign({}, userFormData, { name: e.target.value.toUpperCase() })); }, required: true, icon: 'ph-user' })
+                          ),
+                          React.createElement('div', { className: 'mb-5' },
+                              React.createElement(UI.Input, { label: 'Matrícula', name: 'matricula', value: userFormData.matricula, onChange: function(e) { setUserFormData(Object.assign({}, userFormData, { matricula: e.target.value.toUpperCase() })); }, required: true, icon: 'ph-identification-card' })
+                          ),
+                          React.createElement('div', { className: 'grid grid-cols-2 gap-x-6 mb-5' },
+                              React.createElement(UI.Input, { label: 'Cargo', name: 'role', value: userFormData.role, onChange: function(e) { setUserFormData(Object.assign({}, userFormData, { role: e.target.value.toUpperCase() })); }, required: true }),
+                              React.createElement(UI.Input, { label: 'Líder/Setor', name: 'leader', value: userFormData.leader, onChange: function(e) { setUserFormData(Object.assign({}, userFormData, { leader: e.target.value.toUpperCase() })); } })
+                          ),
+                          React.createElement('div', { className: 'mb-8' },
+                              React.createElement('span', { className: 'nx-text-label block mb-2' }, "Permissões de Acesso"),
+                              React.createElement('div', { className: 'grid grid-cols-2 gap-2 text-xs' },
+                                  permissionsList.map(function(perm) {
+                                      return React.createElement('label', { key: perm.id, className: 'flex items-center gap-2 cursor-pointer hover:text-blue-500' },
+                                          React.createElement('input', {
+                                              type: 'checkbox',
+                                              checked: (userFormData.permissions || []).includes(perm.id),
+                                              onChange: function(e) {
+                                                  var current = userFormData.permissions || [];
+                                                  var next = e.target.checked ? current.concat([perm.id]) : current.filter(function(p) { return p !== perm.id; });
+                                                  setUserFormData(Object.assign({}, userFormData, { permissions: next }));
+                                              }
+                                          }),
+                                          perm.label
+                                      );
+                                  })
+                              )
+                          ),
+                          React.createElement('div', { className: 'flex gap-4' },
+                              React.createElement('button', { type: 'button', onClick: function() { setUserFormData({id:'',name:'',matricula:'',leader:'',role:'',permissions:[]}); setIsUserEditing(false); }, className: 'btn-action-cancel flex-1' }, "Limpar"),
+                              React.createElement('button', { type: 'submit', className: 'btn-action-confirm flex-[2]' }, "Salvar")
+                          )
+                      )
+                  )
+              ),
+              
+              // LISTA
+              React.createElement('div', { className: 'nx-settings-list-col' },
+                  React.createElement(UI.Card, { className: 'p-0 flex flex-col h-full overflow-hidden' },
+                      React.createElement('div', { className: 'nx-settings-list-header' },
+                          React.createElement('h3', { className: 'nx-settings-list-title' }, React.createElement('i', { className: 'ph-bold ph-users-three nx-icon-primary' }), " Equipe Cadastrada"),
+                          React.createElement('span', { className: 'nx-badge-neutral' }, users.length)
+                      ),
+                      React.createElement('div', { className: 'nx-settings-list-content' },
+                          React.createElement('div', { className: 'nx-settings-list-grid' },
+                              users.map(function(u) {
+                                  return React.createElement('div', { key: u.id, className: 'nx-settings-list-item' },
+                                      React.createElement('div', { className: 'nx-settings-list-item-content' },
+                                          React.createElement('div', { className: 'nx-settings-list-item-title-group' },
+                                              React.createElement('span', { className: 'nx-settings-list-item-title' }, u.name),
+                                              (u.isAdmin === 'SIM' || u.isAdmin === true) && React.createElement('i', { className: 'ph-fill ph-shield-check text-blue-500 text-xs', title: 'Admin' })
+                                          ),
+                                          React.createElement('span', { className: 'nx-settings-list-item-subtitle' }, u.role + ' \u2022 ' + u.matricula)
+                                      ),
+                                      React.createElement('div', { className: 'nx-settings-list-item-actions' },
+                                          React.createElement('button', { onClick: function() { setUserFormData(u); setIsUserEditing(true); }, className: 'nx-settings-action-btn' }, React.createElement('i', { className: 'ph-bold ph-pencil-simple text-lg' })),
+                                          React.createElement('button', { onClick: function() { handleDeleteUser(u); }, className: 'nx-settings-action-btn delete' }, React.createElement('i', { className: 'ph-bold ph-trash text-lg' }))
+                                      )
+                                  );
+                              })
+                          )
+                      )
+                  )
+              )
+          );
+      };
+
+      // --- RENDER: SECTORS TAB ---
+      var renderSectorsTab = function() {
+          if (activeTab !== 'SECTORS') return null;
+          return React.createElement('div', { className: 'flex flex-col h-full' },
+              React.createElement('div', { className: 'nx-settings-tab-container' },
+                  React.createElement('div', { className: 'nx-settings-tab-group' },
+                      React.createElement('button', { onClick: function() { setSectorMode('BEDS'); }, className: _classTabBtn('BEDS') }, "Gestão de Leitos"),
+                      React.createElement('button', { onClick: function() { setSectorMode('ORDER'); }, className: _classTabBtn('ORDER') }, "Setores & Ordem")
+                  )
+              ),
+              
+              sectorMode === 'BEDS' ? (
+                  React.createElement('div', { className: 'nx-settings-grid' },
+                      // BEDS FORM
+                      React.createElement('div', { className: 'nx-settings-form-col' },
+                          React.createElement(UI.Card, { className: 'p-8 h-full overflow-y-auto custom-scrollbar' },
+                              React.createElement('div', { className: 'nx-settings-card-header' },
+                                  React.createElement('i', { className: 'ph-bold ph-bed nx-settings-card-header-icon' }),
+                                  React.createElement('h2', { className: 'nx-settings-card-header-title' }, "Editar Leito")
+                              ),
+                              React.createElement('form', { onSubmit: handleBedSubmit },
+                                  React.createElement('div', { className: 'mb-4' },
+                                      React.createElement(UI.Input, { label: 'Número do Leito', name: 'number', value: bedFormData.number, onChange: function(e) { setBedFormData(Object.assign({}, bedFormData, { number: e.target.value.toUpperCase() })); }, required: true, disabled: isBedEditing, icon: 'ph-hash' })
+                                  ),
+                                  React.createElement('div', { className: 'mb-4' },
+                                      React.createElement(UI.SearchableSelect, { label: 'Setor', name: 'sector', value: bedFormData.sector, onChange: function(e) { setBedFormData(Object.assign({}, bedFormData, { sector: e.target.value })); }, options: sectors.map(function(s) { return {value: s.name, label: s.name}; }), required: true })
+                                  ),
+                                  React.createElement('div', { className: 'mb-4' },
+                                      React.createElement(UI.SearchableSelect, { label: 'Tipo', name: 'type', value: bedFormData.type, onChange: function(e) { setBedFormData(Object.assign({}, bedFormData, { type: e.target.value })); }, options: (structure && structure.classes ? structure.classes.map(function(c) { return {value: c.id, label: c.label}; }) : null) || [{value:'UI', label:'UI'}, {value:'CTI', label:'CTI'}], required: true })
+                                  ),
+                                  React.createElement('div', { className: 'grid grid-cols-2 gap-x-6 mb-4' },
+                                      React.createElement(UI.Input, { type: 'number', label: 'SLA (Min)', value: bedFormData.sla, onChange: function(e) { setBedFormData(Object.assign({}, bedFormData, { sla: e.target.value })); } }),
+                                      React.createElement('div', { className: 'nx-toggle-container !p-2 !px-3' },
+                                          React.createElement('span', { className: 'nx-text-label' }, "Estratégico"),
+                                          React.createElement('label', { className: 'nx-toggle scale-75 origin-right' },
+                                              React.createElement('input', { type: 'checkbox', checked: bedFormData.isStrategic, onChange: function(e) { setBedFormData(Object.assign({}, bedFormData, { isStrategic: e.target.checked })); } }),
+                                              React.createElement('span', { className: 'nx-slider' })
+                                          )
+                                      )
+                                  ),
+                                  React.createElement('div', { className: 'mb-8 nx-toggle-container !p-3' },
+                                      React.createElement('span', { className: 'nx-text-label' }, "Perfil CTI/Intensivo"),
+                                      React.createElement('label', { className: 'nx-toggle scale-75 origin-right' },
+                                          React.createElement('input', { type: 'checkbox', checked: bedFormData.isCti, onChange: function(e) { setBedFormData(Object.assign({}, bedFormData, { isCti: e.target.checked })); } }),
+                                          React.createElement('span', { className: 'nx-slider' })
+                                      )
+                                  ),
+                                  React.createElement('div', { className: 'flex gap-4' },
+                                      React.createElement('button', { type: 'button', onClick: function() { setBedFormData({number:'', sector:'', type:'', sla:120, isStrategic:false, isCti:false}); setIsBedEditing(false); }, className: 'btn-action-cancel flex-1' }, "Limpar"),
+                                      React.createElement('button', { type: 'submit', className: 'btn-action-confirm flex-[2]' }, "Salvar Leito")
+                                  )
+                              )
+                          )
+                      ),
+                      // BEDS LIST
+                      React.createElement('div', { className: 'nx-settings-list-col' },
+                          React.createElement(UI.Card, { className: 'p-0 flex flex-col h-full overflow-hidden' },
+                              React.createElement('div', { className: 'nx-settings-list-header' },
+                                  React.createElement('h3', { className: 'nx-settings-list-title' }, React.createElement('i', { className: 'ph-bold ph-list-dashes nx-icon-secondary' }), " Leitos Cadastrados"),
+                                  React.createElement('span', { className: 'nx-badge-neutral' }, beds.length)
+                              ),
+                              React.createElement('div', { className: 'nx-settings-list-content' },
+                                  React.createElement('div', { className: 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3' },
+                                      beds.map(function(b) {
+                                          return React.createElement('div', { key: b.number, className: 'nx-settings-list-item !p-3' },
+                                              React.createElement('div', { className: 'flex items-center gap-3' },
+                                                  React.createElement('div', { className: 'w-10 h-10 rounded-lg bg-white dark:bg-[var(--nx-bg-deep)] border border-blue-100 dark:border-slate-800 flex items-center justify-center text-xs font-black text-blue-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-cyan-400 transition-colors' }, b.number),
+                                                  React.createElement('div', { className: 'flex flex-col' },
+                                                      React.createElement('span', { className: 'text-[10px] font-black text-blue-600 dark:text-slate-300 uppercase tracking-wider' }, b.sector),
+                                                      React.createElement('div', { className: 'flex gap-2' },
+                                                          React.createElement('span', { className: 'nx-text-label' }, b.type),
+                                                          b.isStrategic && React.createElement('span', { className: 'text-[8px] text-purple-500 font-black border border-purple-500/30 px-1 rounded bg-purple-500/10' }, "EST")
+                                                      )
+                                                  )
+                                              ),
+                                              React.createElement('div', { className: 'nx-settings-list-item-actions' },
+                                                  React.createElement('button', { onClick: function() { prepareEditBed(b); }, className: 'nx-settings-action-btn' }, React.createElement('i', { className: 'ph-bold ph-pencil-simple text-lg' })),
+                                                  React.createElement('button', { onClick: function() { handleDeleteBed(b.number); }, className: 'nx-settings-action-btn delete' }, React.createElement('i', { className: 'ph-bold ph-trash text-lg' }))
+                                              )
+                                          );
+                                      })
+                                  )
+                              )
+                          )
+                      )
+                  )
+              ) : (
+                  // ORDER TAB
+                  React.createElement('div', { className: 'nx-settings-grid' },
+                      React.createElement('div', { className: 'nx-settings-form-col' },
+                          React.createElement(UI.Card, { className: 'p-8 h-full' },
+                              React.createElement('div', { className: 'nx-settings-card-header' },
+                                  React.createElement('i', { className: 'ph-bold ph-hospital nx-settings-card-header-icon' }),
+                                  React.createElement('h2', { className: 'nx-settings-card-header-title' }, "Novo Setor")
+                              ),
+                              React.createElement('form', { onSubmit: handleCreateSector },
+                                  React.createElement('div', { className: 'mb-6' },
+                                      React.createElement(UI.Input, { label: 'Nome do Setor', value: newSectorName, onChange: function(e) { setNewSectorName(e.target.value.toUpperCase()); }, required: true, icon: 'ph-text-t' })
+                                  ),
+                                  React.createElement('button', { type: 'submit', className: 'btn-action-confirm w-full' }, "Adicionar Setor")
+                              ),
+                              React.createElement('div', { className: 'mt-8 nx-form-section' },
+                                  React.createElement('p', { className: 'nx-text-label leading-relaxed' },
+                                      React.createElement('i', { className: 'ph-bold ph-info mr-1 nx-icon-primary' }),
+                                      "Arraste os itens na lista ao lado para reorganizar a ordem de exibição nos painéis."
+                                  )
+                              )
+                          )
+                      ),
+                      React.createElement('div', { className: 'nx-settings-list-col' },
+                          React.createElement(UI.Card, { className: 'p-0 flex flex-col h-full overflow-hidden' },
+                              React.createElement('div', { className: 'nx-settings-list-header' },
+                                  React.createElement('h3', { className: 'nx-settings-list-title' }, React.createElement('i', { className: 'ph-bold ph-sort-ascending nx-icon-primary' }), " Ordem dos Setores")
+                              ),
+                              React.createElement('div', { className: 'nx-settings-list-content space-y-3' },
+                                  sectors.slice().sort(function(a,b) { return (a.order || 0) - (b.order || 0); }).map(function(sec, idx) {
+                                      return React.createElement('div', {
+                                          key: sec.name,
+                                          onDragStart: function(e) { handleDragStart(e, idx); },
+                                          onDragOver: function(e) { handleDragOver(e, idx); },
+                                          onDragEnd: handleDragEnd,
+                                          onDrop: function(e) { handleDropGeneric(e, sectors, setSectors, actions.saveSectorOrder, 'SECTOR'); },
+                                          draggable: true,
+                                          className: 'nx-settings-list-item !p-3 cursor-move'
+                                      },
+                                          React.createElement('div', { className: 'flex items-center gap-4' },
+                                              React.createElement('div', { className: 'flex flex-col gap-1 text-blue-300 dark:text-slate-700 hover:text-blue-600 dark:hover:text-cyan-400 transition-colors' }, React.createElement('i', { className: 'ph-bold ph-dots-six-vertical text-xl' })),
+                                              React.createElement('span', { className: 'nx-settings-list-item-title' }, sec.name)
+                                          ),
+                                          React.createElement('div', { className: 'flex items-center gap-4' },
+                                              React.createElement('div', { className: 'text-[10px] font-black text-blue-900 bg-cyan-400 px-3 py-1 rounded-full border border-cyan-500/20 uppercase tracking-widest' }, beds.filter(function(b) { return b.sector === sec.name; }).length + ' LEITOS'),
+                                              React.createElement('div', { className: 'nx-settings-list-item-actions' },
+                                                  React.createElement('button', { onClick: function() { handleDeleteSector(sec.name); }, className: 'nx-settings-action-btn delete' }, React.createElement('i', { className: 'ph-bold ph-trash text-lg' }))
+                                              )
+                                          )
+                                      );
+                                  })
+                              )
+                          )
+                      )
+                  )
+              )
+          );
+      };
+
+      // --- RENDER: INSURANCES TAB ---
+      var renderInsurancesTab = function() {
+          if (activeTab !== 'INSURANCES') return null;
+          return React.createElement('div', { className: 'nx-settings-grid' },
+              React.createElement('div', { className: 'nx-settings-form-col' },
+                  React.createElement(UI.Card, { className: 'p-8 h-full' },
+                      React.createElement('div', { className: 'nx-settings-card-header' },
+                          React.createElement('i', { className: 'ph-bold ph-identification-card nx-settings-card-header-icon' }),
+                          React.createElement('h2', { className: 'nx-settings-card-header-title' }, "Adicionar Convênio")
+                      ),
+                      React.createElement('form', { onSubmit: handleCreateInsurance },
+                          React.createElement('div', { className: 'mb-6' },
+                              React.createElement(UI.Input, { label: 'Nome do Convênio', value: newInsuranceName, onChange: function(e) { setNewInsuranceName(e.target.value.toUpperCase()); }, required: true, icon: 'ph-cardholder' })
+                          ),
+                          React.createElement('button', { type: 'submit', className: 'btn-action-confirm w-full' }, "Adicionar à Lista")
+                      ),
+                      React.createElement('div', { className: 'mt-8 nx-form-section' },
+                          React.createElement('p', { className: 'nx-text-label leading-relaxed' },
+                              React.createElement('i', { className: 'ph-bold ph-arrows-down-up mr-1 nx-icon-primary' }),
+                              "Arraste os itens na lista para definir a ordem de exibição nos formulários."
+                          )
+                      )
+                  )
+              ),
+              React.createElement('div', { className: 'nx-settings-list-col' },
+                  React.createElement(UI.Card, { className: 'p-0 flex flex-col h-full overflow-hidden' },
+                      React.createElement('div', { className: 'nx-settings-list-header' },
+                          React.createElement('h2', { className: 'nx-settings-list-title' }, "Convênios Ativos")
+                      ),
+                      React.createElement('div', { className: 'nx-settings-list-content space-y-3' },
+                          insurances.slice().sort(function(a,b) { return (a.order || 0) - (b.order || 0); }).map(function(ins, idx) {
+                              return React.createElement('div', {
+                                  key: ins.name,
+                                  onDragStart: function(e) { handleDragStart(e, idx); },
+                                  onDragOver: function(e) { handleDragOver(e, idx); },
+                                  onDragEnd: handleDragEnd,
+                                  onDrop: function(e) { handleDropGeneric(e, insurances, setInsurances, actions.saveInsurance, 'INSURANCE'); },
+                                  draggable: true,
+                                  className: 'nx-settings-list-item !p-3 cursor-move'
+                              },
+                                  React.createElement('div', { className: 'flex items-center gap-4' },
+                                      React.createElement('div', { className: 'flex flex-col gap-1 text-blue-300 dark:text-slate-700 hover:text-emerald-400 transition-colors' }, React.createElement('i', { className: 'ph-bold ph-dots-six-vertical text-xl' })),
+                                      React.createElement('span', { className: 'nx-settings-list-item-title' }, ins.name)
+                                  ),
+                                  React.createElement('div', { className: 'nx-settings-list-item-actions' },
+                                      React.createElement('button', { onClick: function() { handleDeleteInsurance(ins.name); }, className: 'nx-settings-action-btn delete' }, React.createElement('i', { className: 'ph-bold ph-trash text-lg' }))
+                                  )
+                              );
+                          }),
+                          insurances.length === 0 && React.createElement('div', { className: 'text-center py-10 nx-text-label italic' }, "Nenhum convênio cadastrado.")
+                      )
+                  )
+              )
+          );
+      };
+
+      // --- RENDER: SPECIALTIES TAB ---
+      var renderSpecialtiesTab = function() {
+          if (activeTab !== 'SPECIALTIES') return null;
+          return React.createElement('div', { className: 'nx-settings-grid' },
+              React.createElement('div', { className: 'nx-settings-form-col' },
+                  React.createElement(UI.Card, { className: 'p-8 h-full' },
+                      React.createElement('div', { className: 'nx-settings-card-header' },
+                          React.createElement('i', { className: 'ph-bold ph-stethoscope nx-settings-card-header-icon' }),
+                          React.createElement('h2', { className: 'nx-settings-card-header-title' }, "Nova Especialidade")
+                      ),
+                      React.createElement('form', { onSubmit: handleCreateSpecialty },
+                          React.createElement('div', { className: 'mb-6' },
+                              React.createElement(UI.Input, { label: 'Nome da Especialidade', value: newSpecialtyName, onChange: function(e) { setNewSpecialtyName(e.target.value.toUpperCase()); }, required: true, icon: 'ph-first-aid' })
+                          ),
+                          React.createElement('button', { type: 'submit', className: 'btn-action-confirm w-full' }, "Adicionar à Lista")
+                      ),
+                      React.createElement('div', { className: 'mt-8 nx-form-section' },
+                          React.createElement('p', { className: 'nx-text-label leading-relaxed' },
+                              React.createElement('i', { className: 'ph-bold ph-list-plus mr-1 nx-icon-primary' }),
+                              "Define as especialidades disponíveis nos formulários de admissão."
+                          )
+                      )
+                  )
+              ),
+              React.createElement('div', { className: 'nx-settings-list-col' },
+                  React.createElement(UI.Card, { className: 'p-0 flex flex-col h-full overflow-hidden' },
+                      React.createElement('div', { className: 'nx-settings-list-header' },
+                          React.createElement('h2', { className: 'nx-settings-list-title' }, "Especialidades Ativas")
+                      ),
+                      React.createElement('div', { className: 'nx-settings-list-content space-y-3' },
+                          specialties.slice().sort(function(a,b) { return (a.order || 0) - (b.order || 0); }).map(function(spec, idx) {
+                              return React.createElement('div', {
+                                  key: spec.name,
+                                  onDragStart: function(e) { handleDragStart(e, idx); },
+                                  onDragOver: function(e) { handleDragOver(e, idx); },
+                                  onDragEnd: handleDragEnd,
+                                  onDrop: function(e) { handleDropGeneric(e, specialties, setSpecialties, actions.saveSpecialty, 'SPECIALTY'); },
+                                  draggable: true,
+                                  className: 'nx-settings-list-item !p-3 cursor-move'
+                              },
+                                  React.createElement('div', { className: 'flex items-center gap-4' },
+                                      React.createElement('div', { className: 'flex flex-col gap-1 text-blue-300 dark:text-slate-700 hover:text-purple-400 transition-colors' }, React.createElement('i', { className: 'ph-bold ph-dots-six-vertical text-xl' })),
+                                      React.createElement('span', { className: 'nx-settings-list-item-title' }, spec.name)
+                                  ),
+                                  React.createElement('div', { className: 'nx-settings-list-item-actions' },
+                                      React.createElement('button', { onClick: function() { handleDeleteSpecialty(spec.name); }, className: 'nx-settings-action-btn delete' }, React.createElement('i', { className: 'ph-bold ph-trash text-lg' }))
+                                  )
+                              );
+                          }),
+                          specialties.length === 0 && React.createElement('div', { className: 'text-center py-10 nx-text-label italic' }, "Nenhuma especialidade cadastrada.")
+                      )
+                  )
+              )
+          );
+      };
+
+      // --- RENDER: AI TAB ---
+      var renderAiTab = function() {
+          if (activeTab !== 'AI') return null;
+          return React.createElement('div', { className: 'nx-settings-grid' },
+              React.createElement('div', { className: 'nx-settings-list-col' },
+                  React.createElement(UI.Card, { className: 'p-6 h-full flex flex-col' },
+                      React.createElement('div', { className: 'nx-settings-card-header' },
+                          React.createElement('i', { className: 'ph-bold ph-robot nx-settings-card-header-icon' }),
+                          React.createElement('div', null,
+                              React.createElement('h2', { className: 'nx-settings-card-header-title' }, "Configuração de I.A."),
+                              React.createElement('p', { className: 'nx-text-label mt-1' }, "Gerencie modelos e prompts do sistema")
+                          )
+                      ),
+                  
+                      React.createElement('div', { className: 'mb-4' },
+                          React.createElement(UI.Input, {
+                              label: 'Nome do Modelo (API)',
+                              value: aiConfig.MODEL,
+                              onChange: function(e) { setAiConfig(Object.assign({}, aiConfig, { MODEL: e.target.value.trim() })); },
+                              icon: 'ph-cpu',
+                              className: '!mb-2'
+                          }),
+                          React.createElement('p', { className: 'text-[9px] text-slate-500 italic pl-1' }, "Ex: gemini-3-flash-preview, gemini-1.5-pro")
+                      ),
+
+                      React.createElement('div', { className: 'mb-4 flex-1 flex flex-col min-h-0' },
+                          React.createElement('label', { className: 'nx-text-label mb-2 block' }, "Prompt: Passagem de Plantão"),
+                          React.createElement('textarea', {
+                              value: aiConfig.PROMPT_SHIFT,
+                              onChange: function(e) { setAiConfig(Object.assign({}, aiConfig, { PROMPT_SHIFT: e.target.value })); },
+                              className: 'nx-input-box flex-1 custom-scrollbar resize-none font-mono',
+                              placeholder: 'Use {{INPUT}} onde o texto do usuário deve ser inserido.'
+                          })
+                      ),
+
+                      React.createElement('div', { className: 'mb-4 flex-1 flex flex-col min-h-0' },
+                          React.createElement('label', { className: 'nx-text-label mb-2 block' }, "Prompt: Editor de Documentos"),
+                          React.createElement('textarea', {
+                              value: aiConfig.PROMPT_EDITOR,
+                              onChange: function(e) { setAiConfig(Object.assign({}, aiConfig, { PROMPT_EDITOR: e.target.value })); },
+                              className: 'nx-input-box flex-1 custom-scrollbar resize-none font-mono',
+                              placeholder: 'Use {{INPUT}} onde o texto do usuário deve ser inserido.'
+                          })
+                      ),
+
+                      React.createElement('button', { onClick: handleSaveAiConfig, className: 'btn-action-confirm w-full gap-2 mt-auto shrink-0' },
+                          React.createElement('i', { className: 'ph-bold ph-floppy-disk text-lg' }), " Salvar Configurações"
+                      )
+                  )
+              ),
+              
+              React.createElement('div', { className: 'nx-settings-form-col' },
+                  React.createElement(UI.Card, { className: 'p-6 h-fit' },
+                      React.createElement('h3', { className: 'text-sm font-bold nx-text-heading uppercase tracking-widest mb-4 nx-separator pb-2' }, "Instruções de Uso"),
+                      React.createElement('div', { className: 'space-y-3 text-xs text-blue-600/70 dark:text-slate-400 leading-relaxed text-justify' },
+                          React.createElement('p', null,
+                              React.createElement('strong', { className: 'nx-text-heading' }, "Modelo:"),
+                              " Nome técnico do modelo Google Gemini. Certifique-se que o modelo existe e é compatível com sua API Key."
+                          ),
+                          React.createElement('p', null,
+                              React.createElement('strong', { className: 'nx-text-heading' }, "Prompts:"),
+                              " Defina como a IA deve se comportar. O sistema substituirá automaticamente a tag ",
+                              React.createElement('code', { className: 'bg-blue-100 dark:bg-[var(--nx-bg-deep)] px-1 py-0.5 rounded text-blue-600 dark:text-amber-400 font-mono' }, '{{INPUT}}'),
+                              " pelo texto digitado pelo usuário."
+                          ),
+                          React.createElement('p', null, "Recomenda-se manter as regras de formatação (CAIXA ALTA, pontuação) para garantir a padronização dos relatórios médicos.")
+                      )
+                  )
+              )
+          );
+      };
+
+      // --- RENDER: SYSTEM TAB ---
+      var renderSystemTab = function() {
+          if (activeTab !== 'SYSTEM') return null;
+          return React.createElement(React.Fragment, null,
+              React.createElement('div', { className: 'flex flex-col items-center justify-center h-full' },
+                  React.createElement(UI.Card, { className: 'p-10 border-rose-500/30 bg-rose-50/50 dark:bg-rose-950/10 max-w-lg text-center shadow-xl' },
+                      React.createElement('div', { className: 'w-20 h-20 bg-rose-100 dark:bg-rose-900/20 rounded-full flex items-center justify-center mx-auto mb-6 animate-pulse' },
+                          React.createElement('i', { className: 'ph-bold ph-warning-octagon text-4xl text-rose-500' })
+                      ),
+                      React.createElement('h2', { className: 'text-xl font-black nx-text-heading text-rose-600 dark:text-rose-400 uppercase tracking-widest mb-4' }, "Zona de Perigo"),
+                      React.createElement('p', { className: 'nx-text-label text-rose-800 dark:text-rose-300 mb-8 leading-relaxed' },
+                          "Ações nesta área são destrutivas e irreversíveis. O Reset de Fábrica irá arquivar o banco atual e criar um novo zero quilômetro."
+                      ),
+                      React.createElement('button', {
+                          onClick: function() { setShowResetModal(true); },
+                          className: 'w-full py-4 bg-rose-600 hover:bg-rose-500 text-white font-black uppercase tracking-[0.2em] rounded-xl shadow-lg shadow-rose-500/20 transition-all active:scale-95 border border-rose-500/50 hover:shadow-rose-500/40'
+                      }, "RESETAR SISTEMA")
+                  ),
+                  
+                  // DIAGNÓSTICO ABAIXO DA ZONA DE PERIGO
+                  React.createElement('div', { className: 'mt-8 flex flex-col items-center gap-4' },
+                      React.createElement('button', { onClick: handleDiagnostic, className: 'nx-text-label hover:text-blue-600 dark:hover:text-cyan-400 flex items-center gap-2 transition-colors' },
+                          React.createElement('i', { className: 'ph-bold ph-heartbeat' }), " Verificar Integridade do Banco"
+                      )
+                  )
+              ),
+
+              // MODAL DE CONFIRMAÇÃO DE RESET
+              React.createElement(UI.Modal, { isOpen: showResetModal, onClose: function() { setShowResetModal(false); }, title: "CONFIRMAÇÃO DE EMERGÊNCIA", className: 'nx-reset-modal' },
+                  React.createElement('div', { className: 'nx-reset-modal-content' },
+                      React.createElement('div', { className: 'nx-reset-modal-bg' }),
+                      React.createElement('i', { className: 'ph-fill ph-siren nx-reset-modal-icon' }),
+                      React.createElement('p', { className: 'nx-reset-modal-title' },
+                          "Você está prestes a reiniciar todo o banco de dados. ",
+                          React.createElement('br'),
+                          React.createElement('span', { className: 'nx-reset-modal-warning' }, "Esta ação não pode ser desfeita.")
+                      ),
+                      React.createElement('p', { className: 'nx-text-label mb-2 relative z-10' }, 'Digite "CONFIRMAR" abaixo:'),
+                      React.createElement('input', {
+                          type: 'text',
+                          value: resetConfirmText,
+                          onChange: function(e) { setResetConfirmText(e.target.value); },
+                          className: 'nx-reset-modal-input',
+                          autoFocus: true
+                      }),
+                      React.createElement('div', { className: 'flex gap-4 relative z-10' },
+                          React.createElement('button', { onClick: function() { setShowResetModal(false); setResetConfirmText(''); }, disabled: isResetting, className: 'btn-action-cancel flex-1' }, "Cancelar"),
+                          React.createElement('button', {
+                              onClick: handleFactoryReset,
+                              disabled: resetConfirmText.toUpperCase() !== 'CONFIRMAR' || isResetting,
+                              className: 'nx-reset-modal-btn'
+                          },
+                              isResetting
+                                  ? React.createElement('i', { className: 'ph-bold ph-circle-notch animate-spin text-lg' })
+                                  : React.createElement('i', { className: 'ph-bold ph-trash text-lg' }),
+                              isResetting ? 'EXECUTANDO...' : 'EXECUTAR RESET'
+                          )
+                      )
+                  )
+              ),
+
+              // MODAL DE RESULTADO DO DIAGNÓSTICO
+              React.createElement(UI.Modal, { isOpen: !!diagResult, onClose: function() { setDiagResult(null); }, title: "Resultado do Diagnóstico", className: 'sm:max-w-sm text-center' },
+                  React.createElement('div', { className: 'p-8' },
+                      React.createElement('div', { className: 'nx-diag-modal-icon-container ' + (diagResult && diagResult.success ? 'success' : 'error') },
+                          React.createElement('i', { className: 'ph-bold ' + (diagResult && diagResult.success ? 'ph-check' : 'ph-x') + ' text-4xl' })
+                      ),
+                      React.createElement('p', { className: 'nx-diag-modal-message' }, diagResult ? diagResult.message : ''),
+                      React.createElement('button', { onClick: function() { setDiagResult(null); }, className: 'btn-action-cancel w-full' }, "Fechar")
+                  )
+              )
+          );
+      };
+
+      // --- MAIN RENDER ---
+      return React.createElement('div', { className: 'nx-container px-10 pt-5 pb-24 animate-fade-in flex flex-col h-full' },
+          
+          React.createElement('div', { className: 'nx-header shrink-0' },
+              React.createElement('div', { className: 'nx-header-title-group' },
+                  React.createElement('h1', { className: 'nx-header-title' }, "Configurações"),
+                  React.createElement('p', { className: 'nx-header-subtitle' },
+                      "Painel de Administração ",
+                      isOptimistic && React.createElement('span', { className: 'ml-2 text-amber-500 border border-amber-500 px-1 rounded text-[8px] font-black animate-pulse' }, "SINC...")
+                  )
+              ),
+              React.createElement('div', { className: 'relative' },
+                  React.createElement('button', { onClick: function() { setShowMenu(!showMenu); }, className: 'nx-header-btn group' },
+                      React.createElement('i', { className: 'ph-bold ph-list text-2xl group-hover:scale-110 transition-transform' })
+                  ),
+                  showMenu && React.createElement(React.Fragment, null,
+                      React.createElement('div', { className: 'absolute right-0 top-12 z-50 w-56 nx-dropdown-menu' },
+                          React.createElement('button', { onClick: function() { setShowMenu(false); }, className: 'nx-dropdown-btn' },
+                              React.createElement('i', { className: 'ph-bold ph-eye text-lg text-cyan-400' }), " Tema (Automático)"
+                          )
+                      )
+                  )
+              )
+          ),
+          React.createElement('div', { className: 'nx-header-divider shrink-0' }),
+
+          React.createElement('div', { className: 'flex gap-8 mb-8 border-b border-blue-500/10 px-2 shrink-0 overflow-x-auto custom-scrollbar whitespace-nowrap' },
+              navTabs.map(function(tab) {
+                  return React.createElement('button', {
+                      key: tab.id,
+                      onClick: function() { setActiveTab(tab.id); },
+                      className: _classTabActive(tab.id)
+                  },
+                      React.createElement('i', { className: 'ph-bold ' + tab.icon + ' text-lg' }),
+                      ' ' + tab.label,
+                      activeTab === tab.id && React.createElement('div', { className: 'absolute bottom-0 left-0 w-full h-0.5 bg-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.8)]' })
+                  );
+              })
+          ),
+
+          React.createElement('div', { className: 'flex-1 min-h-0 relative h-full' },
+              renderUsersTab(),
+              renderSectorsTab(),
+              renderInsurancesTab(),
+              renderSpecialtiesTab(),
+              renderAiTab(),
+              renderSystemTab()
+          )
+      );
+    };
+
+    var Settings = function() {
+      var context = window.App.Context.useAppContext();
+      var readyState = React.useState(false);
+      var ready = readyState[0];
+      var setReady = readyState[1];
+      var missingState = React.useState([]);
+      var missing = missingState[0];
+      var setMissing = missingState[1];
+      
+      React.useEffect(function() {
+          console.log("[Settings] Initializing dependency check...");
+          var check = function() {
+              var UI = window.App.UI || {};
+              var Hooks = window.App.Hooks;
+              var Service = window.App.Service;
+              
+              var deps = {
+                  "UI.Card": !!UI.Card,
+                  "UI.Input": !!UI.Input,
+                  "UI.Modal": !!UI.Modal,
+                  "Hooks": !!Hooks,
+                  "Service": !!Service
+              };
+              
+              var missingDeps = Object.keys(deps).filter(function(k) { return !deps[k]; });
+              setMissing(missingDeps);
+              
+              if (missingDeps.length === 0) {
+                  console.log("[Settings] All dependencies ready!");
+                  setReady(true);
+              } else {
+                  console.warn("[Settings] Still waiting for:", missingDeps);
+              }
+          };
+          
+          check();
+          var timer = setInterval(check, 1000);
+          return function() { clearInterval(timer); };
+      }, []);
+
+      if (!ready) {
+          return React.createElement('div', { className: 'flex flex-col h-full items-center justify-center text-slate-500 font-bold uppercase tracking-widest animate-pulse' },
+              React.createElement('div', { className: 'flex items-center mb-4' },
+                  React.createElement('i', { className: 'ph-bold ph-circle-notch animate-spin mr-2' }),
+                  " Carregando Dependências..."
+              ),
+              React.createElement('div', { className: 'text-[10px] opacity-50 bg-slate-900/50 p-4 rounded-lg border border-slate-800' },
+                  React.createElement('p', { className: 'mb-2 border-b border-slate-800 pb-1' }, "Aguardando módulos:"),
+                  React.createElement('ul', { className: 'space-y-1 font-mono' },
+                      React.createElement('li', { className: (window.App.UI && window.App.UI.Card) ? "text-emerald-500" : "text-rose-500" },
+                          (window.App.UI && window.App.UI.Card) ? "\u2713" : "\u2717", " UI.Card"
+                      ),
+                      React.createElement('li', { className: (window.App.UI && window.App.UI.Input) ? "text-emerald-500" : "text-rose-500" },
+                          (window.App.UI && window.App.UI.Input) ? "\u2713" : "\u2717", " UI.Input"
+                      ),
+                      React.createElement('li', { className: (window.App.UI && window.App.UI.Modal) ? "text-emerald-500" : "text-rose-500" },
+                          (window.App.UI && window.App.UI.Modal) ? "\u2713" : "\u2717", " UI.Modal"
+                      ),
+                      React.createElement('li', { className: window.App.Hooks ? "text-emerald-500" : "text-rose-500" },
+                          window.App.Hooks ? "\u2713" : "\u2717", " Hooks"
+                      ),
+                      React.createElement('li', { className: window.App.Service ? "text-emerald-500" : "text-rose-500" },
+                          window.App.Service ? "\u2713" : "\u2717", " Service"
+                      )
+                  )
+              )
+          );
+      }
+
+      return React.createElement(SettingsView, Object.assign({}, context, { UI: window.App.UI, Service: window.App.Service, Hooks: window.App.Hooks }));
+    };
+
+    window.App.Settings = Settings;
+  })();
+</script>

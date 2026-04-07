@@ -1,0 +1,179 @@
+<script>
+  (function() {
+    window.App = window.App || {};
+
+    /**
+     * Logger System - Centraliza logs, warnings, errors e integração com Sentry
+     * 
+     * Uso:
+     *   window.App.Logger.log('Info message')
+     *   window.App.Logger.warn('Warning message')
+     *   window.App.Logger.error('Error message', errorObj)
+     *   window.App.Logger.debug('Debug message') // só se DEBUG=true
+     */
+
+    const LOG_LEVELS = {
+      DEBUG: 0,
+      INFO: 1,
+      WARN: 2,
+      ERROR: 3
+    };
+
+    class Logger {
+      constructor() {
+        this._debug = window.App && window.App.DEBUG;
+        this.minLevel = this._debug ? LOG_LEVELS.DEBUG : LOG_LEVELS.INFO;
+        this.sentryEnabled = false;
+        this.history = []; // Histórico de logs (últimos 100)
+        this.maxHistory = 100;
+      }
+
+      /**
+       * Initialize Sentry (opcional - requer SENTRY_DSN)
+       * @param {string} dsn - Sentry DSN URL
+       * @param {object} options - Config do Sentry
+       */
+      initSentry(dsn, options = {}) {
+        try {
+          if (typeof Sentry !== 'undefined') {
+            Sentry.init({
+              dsn,
+              environment: this._debug ? 'development' : 'production',
+              beforeSend(event) {
+                // Não enviar eventos de debug para Sentry em prod
+                if (!window.App.DEBUG && event.level === 'debug') return null;
+                return event;
+              },
+              ...options
+            });
+            this.sentryEnabled = true;
+            this.info('✓ Sentry inicializado');
+          }
+        } catch (e) {
+          this.warn('Sentry não disponível ou falha na inicialização:', e);
+        }
+      }
+
+      /**
+       * Log level DEBUG (só se DEBUG=true)
+       */
+      debug(message, data) {
+        if (this.minLevel <= LOG_LEVELS.DEBUG) {
+          this._log('DEBUG', message, data, '#94a3b8');
+        }
+      }
+
+      /**
+       * Log level INFO
+       */
+      info(message, data) {
+        if (this.minLevel <= LOG_LEVELS.INFO) {
+          this._log('INFO', message, data, '#06b6d4');
+          if (this.sentryEnabled && typeof Sentry !== 'undefined') {
+            Sentry.captureMessage(message, 'info');
+          }
+        }
+      }
+
+      log(message, data) {
+        this.info(message, data);
+      }
+
+      /**
+       * Log level WARN
+       */
+      warn(message, data) {
+        if (this.minLevel <= LOG_LEVELS.WARN) {
+          this._log('WARN', message, data, '#fbbf24');
+          if (this.sentryEnabled && typeof Sentry !== 'undefined') {
+            Sentry.captureMessage(message, 'warning');
+          }
+        }
+      }
+
+      /**
+       * Log level ERROR
+       */
+      error(message, errorObj) {
+        this._log('ERROR', message, errorObj, '#f43f5e');
+        if (this.sentryEnabled && typeof Sentry !== 'undefined') {
+          Sentry.captureException(errorObj || new Error(message));
+        }
+      }
+
+      /**
+       * Log interno com timestamp
+       */
+      _log(level, message, data, color) {
+        const timestamp = new Date().toISOString();
+        const logEntry = { timestamp, level, message, data };
+        
+        // Manter histórico
+        this.history.push(logEntry);
+        if (this.history.length > this.maxHistory) {
+          this.history.shift();
+        }
+
+        // Console output
+        const prefix = `[${timestamp}] ${level}`;
+        if (data) {
+          console.log(`%c${prefix}: ${message}`, `color: ${color}; font-weight: bold;`, data);
+        } else {
+          console.log(`%c${prefix}: ${message}`, `color: ${color}; font-weight: bold;`);
+        }
+      }
+
+      /**
+       * Obter histórico de logs
+       */
+      getHistory(level = null) {
+        if (!level) return this.history;
+        return this.history.filter(e => e.level === level);
+      }
+
+      /**
+       * Limpar histórico
+       */
+      clearHistory() {
+        this.history = [];
+      }
+
+      /**
+       * Exportar logs como JSON (útil para enviar ao backend)
+       */
+      exportLogs() {
+        return JSON.stringify(this.history, null, 2);
+      }
+
+      /**
+       * Converter erro para objeto serializado
+       */
+      static formatError(error) {
+        return {
+          message: error?.message || String(error),
+          stack: error?.stack || '',
+          name: error?.name || 'Error'
+        };
+      }
+    }
+
+    // Singleton
+    const preQueue = window.App.Logger && window.App.Logger._queue ? window.App.Logger._queue : [];
+    window.App.Logger = new Logger();
+
+    // Process pre-queue
+    if (preQueue.length > 0) {
+      preQueue.forEach(item => {
+        const [level, ...args] = item;
+        if (typeof window.App.Logger[level] === 'function') {
+          window.App.Logger[level](...args);
+        }
+      });
+    }
+
+    // Log inicial
+    if (window.App && window.App.DEBUG) {
+      window.App.Logger.debug('✓ Logger System inicializado');
+    }
+  })();
+</script>

@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    
+    <!-- 1. COMPILADOR JSX (DISABLED — Babel removed, all JSX converted to createElement) -->
+    <!-- <?!= include('Lib_Compiler'); ?> -->
+
+    <!-- 2. CORE (React, DOM) -->
+    <?!= include('Lib_Core'); ?>
+
+    <!-- 3. ESTILOS & ÍCONES -->
+    <?!= include('Lib_Tailwind'); ?>
+    <?!= include('Style'); ?>
+
+    <!-- 4. GRÁFICOS -->
+    <?!= include('Lib_Charts'); ?>
+    
+    <title>SysGestão Hospitalar - Enterprise v3.2</title>
+</head>
+  <body>
+
+    <!-- THEME INIT (antes de qualquer renderização — evita flash de light mode) -->
+    <script>
+      (function() {
+        try {
+          var saved = localStorage.getItem('nx-theme');
+          if (saved !== 'light') {
+            document.documentElement.classList.add('dark');
+          }
+        } catch(e) {
+          // Sem localStorage → default é dark
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
+
+    <!-- BACKGROUND GLOBAL FIXO (orbs + gradiente) -->
+    <div class="nx-global-bg">
+      <div class="nx-global-orb nx-global-orb-1"></div>
+      <div class="nx-global-orb nx-global-orb-2"></div>
+      <div class="nx-global-orb nx-global-orb-3"></div>
+    </div>
+
+    <!-- ELEMENTO RAIZ -->
+    <div id="root">
+        <div class="nx-loading-screen">
+            <div class="nx-loading-content">
+                <div class="nx-loading-header">
+                    <h2 class="nx-loading-title">SysGestão</h2>
+                </div>
+                <div class="nx-loading-bar-container">
+                    <div class="nx-loading-bar"></div>
+                </div>
+                <p id="loading-text" class="nx-loading-status">Carregando Módulos...</p>
+                <div id="debug-text" class="nx-loading-status opacity-50"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- CONFIGURAÇÃO INICIAL -->
+    <script>
+      window.App = {
+        UI: {}, Utils: {}, Charts: {}, News: {}, INSURANCE_OPTIONS: [],
+        STRUCTURE: { sectors: [], beds: [], flows: [], classes: [], groups: [], specialties: [] },
+        DEBUG: true,
+        safeStorage: {
+            getItem: function(key, useLocalStorage = false) {
+                try { return useLocalStorage ? localStorage.getItem(key) : sessionStorage.getItem(key); }
+                catch (e) { return this.memoryStorage ? this.memoryStorage[key] : null; }
+            },
+            setItem: function(key, value, useLocalStorage = false) {
+                try { useLocalStorage ? localStorage.setItem(key, value) : sessionStorage.setItem(key, value); }
+                catch (e) { 
+                    this.memoryStorage = this.memoryStorage || {};
+                    this.memoryStorage[key] = value;
+                }
+            },
+            removeItem: function(key, useLocalStorage = false) {
+                try { useLocalStorage ? localStorage.removeItem(key) : sessionStorage.removeItem(key); }
+                catch (e) { 
+                    if (this.memoryStorage) delete this.memoryStorage[key];
+                }
+            },
+            memoryStorage: {}
+        },
+        Logger: {
+          _queue: [],
+          log: function(...args) { this._queue.push(['info', ...args]); },
+          info: function(...args) { this._queue.push(['info', ...args]); },
+          warn: function(...args) { this._queue.push(['warn', ...args]); },
+          error: function(...args) { this._queue.push(['error', ...args]); },
+          debug: function(...args) { this._queue.push(['debug', ...args]); },
+        }
+      };
+    </script>
+
+    <!-- MÓDULOS -->
+    <?!= include('Logger'); ?>
+    <?!= include('ErrorHandler'); ?>
+    <?!= include('Logo'); ?>
+    <?!= include('Constants'); ?>
+    <?!= include('OfflineDB'); ?>
+    <?!= include('UI'); ?>
+    <?!= include('Components'); ?>
+    <?!= include('ChartComponents'); ?>
+    <?!= include('Utils'); ?>
+    <?!= include('Tests'); ?>
+    <?!= include('Hooks'); ?>
+    <?!= include('Intelligence'); ?>
+    <?!= include('Service'); ?>
+    <?!= include('Context'); ?>
+    <?!= include('ReportTemplates'); ?>
+    <!-- <?!= include('NewsEngine'); ?> --><!-- ⚠️ STANDBY -->
+    <?!= include('ScenarioCarousel'); ?>
+    <?!= include('ScenarioSidebar'); ?>
+    <?!= include('ScenarioTicker'); ?>
+    <?!= include('GlobalScenario'); ?>
+    <!-- ✅ TODOS OS MÓDULOS CONVERTIDOS — JSX → React.createElement -->
+    <?!= include('BedMapComponents'); ?>
+    <?!= include('BedMapTooltip'); ?>
+    <?!= include('BedMapModals'); ?>
+    <?!= include('BedMap'); ?>
+    <?!= include('PatientRegisterComponents'); ?>
+    <?!= include('PatientRegister'); ?>
+    <?!= include('TransferComponents'); ?>
+    <?!= include('Transfer'); ?>
+    <?!= include('PaControlComponents'); ?>
+    <?!= include('PaControl'); ?>
+    <?!= include('DischargeDeathComponents'); ?>
+    <?!= include('DischargeDeath'); ?>
+    <?!= include('Forecast'); ?>
+    <?!= include('ShiftHandover'); ?>
+    <?!= include('DocumentEditor'); ?>
+    <?!= include('ReportComponents'); ?>
+    <?!= include('CensusView'); ?>
+    <?!= include('RotationView'); ?>
+    <?!= include('Reports'); ?>
+    <?!= include('AuditLog'); ?>
+    <?!= include('Settings'); ?>
+    <?!= include('Login'); ?>
+    <?!= include('Sidebar'); ?>
+    <?!= include('App'); ?>
+    <?!= include('LazyView'); ?> 
+
+    <!-- BOOTSTRAPPER -->
+    <script>
+      (function() {
+        var attempts = 0;
+        var maxAttempts = 300; 
+        
+        var checkReady = setInterval(function() {
+          attempts++;
+          
+          var checks = {
+            'React': !!window.React,
+            'DOM': !!window.ReactDOM,
+            'App': !!(window.App && window.App.MainApp)
+          };
+
+          if (Object.values(checks).every(Boolean)) {
+            clearInterval(checkReady);
+            const root = ReactDOM.createRoot(document.getElementById('root'));
+            root.render(React.createElement(window.App.MainApp));
+          } else if (attempts > maxAttempts) {
+            clearInterval(checkReady);
+            document.getElementById('root').innerHTML = '<div style="color:red;padding:20px">Erro: Falha ao carregar módulos.</div>';
+          }
+        }, 100);
+      })();
+    </script>
+  </body>
+</html>

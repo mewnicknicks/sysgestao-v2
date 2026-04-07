@@ -1,0 +1,274 @@
+
+<script>
+  (function() {
+    window.App = window.App || {};
+
+    const DB_NAME = 'SysGestãoDB';
+    // VERSÃO 5: Adiciona a store 'shiftHandover' para persistência do plantão
+    const DB_VERSION = 5; 
+    
+    const STORES = [
+        'patients', 
+        'paList', 
+        'transfers', 
+        'discharges', 
+        'reservations', 
+        'blockedBeds', 
+        'forecast', 
+        'users', 
+        'restricted',
+        'structure',
+        'shiftHandover', // NOVO: Guarda anotações e admissões do plantão
+        'actionsQueue'   // NOVO: Fila de ações para sincronização offline
+    ];
+
+    class OfflineDB {
+        constructor() {
+            this.db = null;
+        }
+
+        /**
+         * Inicializa o Banco de Dados.
+         * Cria as tabelas (ObjectStores) se não existirem.
+         */
+        async init() {
+            return new Promise((resolve, reject) => {
+                if (!window.indexedDB) {
+                    console.warn("OfflineDB: IndexedDB not supported in this browser. Offline-first mode will be limited.");
+                    resolve(false);
+                    return;
+                }
+
+                const request = window.indexedDB.open(DB_NAME, DB_VERSION);
+
+                request.onerror = (event) => {
+                    console.error("OfflineDB: Fatal error opening database.", event);
+                    resolve(false); 
+                };
+
+                request.onsuccess = (event) => {
+                    this.db = event.target.result;
+                    if (window.App && window.App.Logger) {
+                      window.App.Logger.debug(`OfflineDB: Conectado (v${DB_VERSION}).`);
+                    }
+                    resolve(true);
+                };
+
+                request.onupgradeneeded = (event) => {
+                    const db = event.target.result;
+                    if (window.App && window.App.Logger) {
+                      window.App.Logger.debug(`OfflineDB: Atualizando esquema para v${DB_VERSION}...`);
+                    }
+                    
+                    STORES.forEach(storeName => {
+                        if (!db.objectStoreNames.contains(storeName)) {
+                            db.createObjectStore(storeName);
+                            if (window.App && window.App.Logger) {
+                              window.App.Logger.debug(`OfflineDB: Store '${storeName}' criada.`);
+                            }
+                        }
+                    });
+                };
+            });
+        }
+
+        /**
+         * Salva um objeto ou array inteiro em uma store específica.
+         * Usa chave fixa 'full_list' para simplificar (substituição total).
+         */
+        async saveList(storeName, data) {
+            if (!this.db) return;
+            return new Promise((resolve, reject) => {
+                try {
+                    if (!this.db.objectStoreNames.contains(storeName)) {
+                        console.warn(`OfflineDB: Store '${storeName}' not found. Skipping.`);
+                        resolve(); 
+                        return;
+                    }
+
+                    const transaction = this.db.transaction([storeName], 'readwrite');
+                    const store = transaction.objectStore(storeName);
+                    
+                    // Serializa se necessário, ou salva direto (IndexedDB suporta objetos JS)
+                    // Clonagem estruturada automática do navegador lida com Date, etc.
+                    const request = store.put(data, 'full_list'); 
+
+                    request.onsuccess = () => resolve();
+                    request.onerror = (e) => {
+                        console.error(`OfflineDB: Erro ao salvar em ${storeName}`, e);
+                        reject(e);
+                    };
+                } catch (e) {
+                    console.warn(`OfflineDB: Exceção ao salvar ${storeName}:`, e);
+                    resolve(); 
+                }
+            });
+        }
+
+        /**
+         * Atualiza apenas uma entrada específica no forecast (Previsão)
+         * para evitar reescrever o objeto inteiro desnecessariamente.
+         */
+        async updateForecastEntry(date, dayData) {
+            if (!this.db) return;
+            try {
+                // Lê o objeto completo, atualiza a chave e salva de volta
+                // (IndexedDB é NoSQL key-value simples aqui)
+                const currentForecast = await this.getList('forecast') || {};
+                const updatedForecast = {
+                    ...currentForecast,
+                    [date]: dayData
+                };
+                await this.saveList('forecast', updatedForecast);
+            } catch (e) {
+                console.error("OfflineDB: Erro update parcial forecast:", e);
+            }
+        }
+
+        /**
+         * Retorna os dados de uma store.
+         */
+        async getList(storeName) {
+            if (!this.db) return null;
+            return new Promise((resolve, reject) => {
+                try {
+                    if (!this.db.objectStoreNames.contains(storeName)) {
+                        resolve(null);
+                        return;
+                    }
+                    const transaction = this.db.transaction([storeName], 'readonly');
+                    const store = transaction.objectStore(storeName);
+                    const request = store.get('full_list');
+
+                    request.onsuccess = () => {
+                        resolve(request.result || null);
+                    };
+                    request.onerror = (e) => {
+                        console.warn(`OfflineDB: Erro ler ${storeName}`, e);
+                        resolve(null);
+                    };
+                } catch (e) {
+                    resolve(null);
+                }
+            });
+        }
+
+        /**
+         * Carrega TUDO de uma vez para o Boot do App.
+         */
+        async loadAll() {
+            if (!this.db) return null;
+            const result = {};
+            
+            // Executa leituras em paralelo para performance máxima
+            await Promise.all(STORES.map(async (store) => {
+                const data = await this.getList(store);
+                if (data) result[store] = data;
+            }));
+
+            // Se não tem nada (nem estrutura), retorna null para forçar fetch do servidor
+            if (Object.keys(result).length === 0) return null;
+            return result;
+        }
+
+        /**
+         * Salva TUDO de uma vez (Sync do Servidor).
+         */
+        async saveAll(appData) {
+            if (!this.db || !appData) return;
+            
+            // Mapeia as chaves do objeto appData para os nomes das stores
+            const mapping = {
+                patients: appData.patients,
+                paList: appData.paList,
+                transfers: appData.transfers,
+                discharges: appData.discharges,
+                reservations: appData.reservations,
+                blockedBeds: appData.blockedBeds,
+                forecast: appData.forecast,
+                restricted: appData.restricted,
+                users: appData.users,
+                structure: appData.structure // CRUCIAL: Salva a estrutura!
+            };
+
+            const promises = [];
+            for (const [store, data] of Object.entries(mapping)) {
+                // Só salva se o dado existir e a store for válida
+                if (data !== undefined && STORES.includes(store)) {
+                    promises.push(this.saveList(store, data));
+                }
+            }
+            
+            await Promise.all(promises);
+            if (window.App && window.App.Logger) {
+              window.App.Logger.debug("OfflineDB: Cache local totalmente sincronizado.");
+            }
+        }
+
+        /**
+         * Adiciona uma ação à fila offline.
+         */
+        async enqueueAction(action) {
+            if (!this.db) return;
+            return new Promise((resolve, reject) => {
+                const transaction = this.db.transaction(['actionsQueue'], 'readwrite');
+                const store = transaction.objectStore('actionsQueue');
+                const id = Date.now() + Math.random().toString(36).substr(2, 9);
+                const request = store.put({ ...action, id, timestamp: new Date().toISOString() }, id);
+                request.onsuccess = () => resolve(id);
+                request.onerror = (e) => reject(e);
+            });
+        }
+
+        /**
+         * Retorna todas as ações pendentes na fila.
+         */
+        async getActionsQueue() {
+            if (!this.db) return [];
+            return new Promise((resolve) => {
+                const transaction = this.db.transaction(['actionsQueue'], 'readonly');
+                const store = transaction.objectStore('actionsQueue');
+                const request = store.getAll();
+                request.onsuccess = () => resolve(request.result || []);
+                request.onerror = () => resolve([]);
+            });
+        }
+
+        /**
+         * Remove uma ação da fila após processamento.
+         */
+        async dequeueAction(id) {
+            if (!this.db) return;
+            return new Promise((resolve) => {
+                const transaction = this.db.transaction(['actionsQueue'], 'readwrite');
+                const store = transaction.objectStore('actionsQueue');
+                const request = store.delete(id);
+                request.onsuccess = () => resolve();
+                request.onerror = () => resolve();
+            });
+        }
+
+        /**
+         * Limpa o banco de dados (Logout).
+         */
+        async clear() {
+            if (!this.db) return;
+            const promises = STORES.map(storeName => {
+                return new Promise((resolve) => {
+                    try {
+                        const transaction = this.db.transaction([storeName], 'readwrite');
+                        const store = transaction.objectStore(storeName);
+                        store.clear().onsuccess = resolve;
+                    } catch(e) { resolve(); }
+                });
+            });
+            await Promise.all(promises);
+            if (window.App && window.App.Logger) {
+              window.App.Logger.debug("OfflineDB: Dados limpos (Logout).");
+            }
+        }
+    }
+
+    window.App.OfflineDB = new OfflineDB();
+  })();
+</script>

@@ -1,0 +1,161 @@
+
+<script>
+  (function() {
+    window.App = window.App || {};
+
+    var AuditLog = function() {
+        var UI = window.App.UI || {};
+        var Service = window.App.Service;
+        var Utils = window.App.Utils || {};
+
+        var logsState = React.useState([]);
+        var logs = logsState[0];
+        var setLogs = logsState[1];
+        var loadingState = React.useState(false);
+        var loading = loadingState[0];
+        var setLoading = loadingState[1];
+        var filtersState = React.useState({ 
+            startDate: new Date().toISOString().split('T')[0], 
+            endDate: new Date().toISOString().split('T')[0],
+            user: '',
+            actionType: ''
+        });
+        var filters = filtersState[0];
+        var setFilters = filtersState[1];
+        var selectedLogState = React.useState(null);
+        var selectedLog = selectedLogState[0];
+        var setSelectedLog = selectedLogState[1];
+
+        var fetchLogs = async function() {
+            setLoading(true);
+            try {
+                var data = await Service.Admin.getAuditLogs(200, filters.startDate, filters.endDate);
+                setLogs(data || []);
+            } catch (e) {
+                console.error(e);
+                if(UI.Toast) UI.Toast.show("Erro ao carregar logs.", "error");
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        React.useEffect(function() {
+            fetchLogs();
+        }, []);
+
+        var filteredLogs = React.useMemo(function() {
+            return logs.filter(function(l) {
+                if (filters.user && !String(l.user).toUpperCase().includes(filters.user.toUpperCase())) return false;
+                if (filters.actionType && !String(l.action).toUpperCase().includes(filters.actionType.toUpperCase())) return false;
+                return true;
+            });
+        }, [logs, filters.user, filters.actionType]);
+
+        var getActionColor = function(action) {
+            if (action.includes('DELETE')) return 'audit-color-delete';
+            if (action.includes('BLOCK')) return 'audit-color-block';
+            if (action.includes('UPDATE')) return 'audit-color-update';
+            return 'audit-color-default';
+        };
+
+        var formatDetails = function(json) {
+            try {
+                return JSON.stringify(typeof json === 'string' ? JSON.parse(json) : json, null, 2);
+            } catch (e) { return String(json); }
+        };
+
+        return React.createElement('div', { className: 'nx-container px-10 pt-5 pb-20 animate-fade-in' },
+            React.createElement('div', { className: 'nx-header shrink-0' },
+                React.createElement('div', { className: 'nx-header-title-group' },
+                    React.createElement('h1', { className: 'nx-header-title' }, "Auditoria & Segurança"),
+                    React.createElement('p', { className: 'nx-header-subtitle' }, "Rastreabilidade de Ações")
+                )
+            ),
+            React.createElement('div', { className: 'nx-header-divider shrink-0' }),
+
+            React.createElement('div', { className: 'nx-audit-container' },
+                // FILTROS TOPO
+                React.createElement('div', { className: 'p-4 border-b border-blue-200 dark:border-slate-800 flex gap-4 items-end bg-blue-50 dark:bg-[var(--nx-bg-deep)]' },
+                    React.createElement(UI.Input, { type: 'date', label: 'Início', value: filters.startDate, onChange: function(e) { setFilters(Object.assign({}, filters, { startDate: e.target.value })); }, className: '!mb-0 w-40' }),
+                    React.createElement(UI.Input, { type: 'date', label: 'Fim', value: filters.endDate, onChange: function(e) { setFilters(Object.assign({}, filters, { endDate: e.target.value })); }, className: '!mb-0 w-40' }),
+                    React.createElement(UI.Input, { label: 'Usuário / Matrícula', value: filters.user, onChange: function(e) { setFilters(Object.assign({}, filters, { user: e.target.value })); }, className: '!mb-0 flex-1', icon: 'ph-user-focus' }),
+                    React.createElement(UI.Input, { label: 'Tipo de Ação', value: filters.actionType, onChange: function(e) { setFilters(Object.assign({}, filters, { actionType: e.target.value })); }, className: '!mb-0 w-40', icon: 'ph-code' }),
+                    React.createElement('button', { onClick: fetchLogs, disabled: loading, className: 'nx-audit-btn bg-blue-600 hover:bg-blue-500' },
+                        loading
+                            ? React.createElement('i', { className: 'ph-bold ph-circle-notch animate-spin' })
+                            : React.createElement('i', { className: 'ph-bold ph-magnifying-glass' }),
+                        " Filtrar Logs"
+                    )
+                ),
+
+                React.createElement('div', { className: 'flex-1 flex min-h-0' },
+                    // LISTA LATERAL (TIMELINE)
+                    React.createElement('div', { className: 'nx-audit-sidebar border-blue-200 dark:border-slate-800 bg-white dark:bg-[var(--nx-bg-glass)]' },
+                        filteredLogs.map(function(log) {
+                            return React.createElement('div', {
+                                key: log.id,
+                                onClick: function() { setSelectedLog(log); },
+                                className: 'nx-audit-item border-blue-100 dark:border-slate-800/50 ' + (selectedLog && selectedLog.id === log.id ? 'nx-audit-item-active bg-blue-50 dark:bg-cyan-950/20' : 'hover:bg-blue-50/50 dark:hover:bg-slate-900')
+                            },
+                                React.createElement('div', { className: 'flex justify-between items-start mb-1' },
+                                    React.createElement('span', { className: 'nx-audit-action-text ' + getActionColor(log.action) }, log.action),
+                                    React.createElement('span', { className: 'text-[9px] font-mono text-blue-400 dark:text-slate-500' }, new Date(log.date).toLocaleTimeString('pt-BR'))
+                                ),
+                                React.createElement('div', { className: 'text-xs font-bold text-blue-900 dark:text-white mb-1 truncate group-hover:text-blue-600 dark:group-hover:text-cyan-100' }, log.summary),
+                                React.createElement('div', { className: 'flex justify-between items-center mt-2' },
+                                    React.createElement('span', { className: 'text-[8px] font-bold text-blue-900 bg-cyan-400 px-2 py-0.5 rounded border border-cyan-500/20 uppercase' }, log.user),
+                                    React.createElement('span', { className: 'text-[9px] font-mono text-blue-400 dark:text-slate-600' }, new Date(log.date).toLocaleDateString())
+                                )
+                            );
+                        }),
+                        filteredLogs.length === 0 && !loading && React.createElement('div', { className: 'p-8 text-center text-blue-400 dark:text-slate-600 text-xs uppercase tracking-widest' }, "Nenhum registro encontrado")
+                    ),
+
+                    // DETALHES (JSON VIEWER)
+                    React.createElement('div', { className: 'nx-audit-detail-panel bg-white dark:bg-[var(--nx-bg-panel)]' },
+                        selectedLog ? (
+                            React.createElement('div', { className: 'flex flex-col h-full' },
+                                React.createElement('div', { className: 'p-6 border-b border-blue-100 dark:border-[var(--nx-border)] shrink-0 bg-blue-50/30 dark:bg-[var(--nx-bg-deep)]' },
+                                    React.createElement('div', { className: 'flex items-center gap-3 mb-2' },
+                                        React.createElement('div', { className: 'w-10 h-10 rounded-lg bg-blue-100 dark:bg-slate-800 flex items-center justify-center audit-color-update' }, React.createElement('i', { className: 'ph-duotone ph-fingerprint text-2xl' })),
+                                        React.createElement('div', null,
+                                            React.createElement('h2', { className: 'text-lg font-black text-blue-900 dark:text-white uppercase tracking-tight' }, selectedLog.action),
+                                            React.createElement('p', { className: 'text-xs text-blue-400 dark:text-slate-500 dark:text-slate-400 font-mono' }, 'ID: ' + selectedLog.id)
+                                        )
+                                    ),
+                                    React.createElement('div', { className: 'grid grid-cols-2 gap-4 mt-4' },
+                                        React.createElement('div', { className: 'bg-blue-50 dark:bg-slate-900/50 p-3 rounded-lg border border-blue-100 dark:border-slate-800' },
+                                            React.createElement('span', { className: 'text-[9px] font-black text-blue-400 dark:text-slate-500 uppercase block mb-1' }, "Usuário Responsável"),
+                                            React.createElement('span', { className: 'text-sm font-bold text-blue-900 dark:text-white' }, selectedLog.user)
+                                        ),
+                                        React.createElement('div', { className: 'bg-blue-50 dark:bg-slate-900/50 p-3 rounded-lg border border-blue-100 dark:border-slate-800' },
+                                            React.createElement('span', { className: 'text-[9px] font-black text-blue-400 dark:text-slate-500 uppercase block mb-1' }, "Alvo / Referência"),
+                                            React.createElement('span', { className: 'text-sm font-bold text-blue-900 dark:text-white' }, selectedLog.target)
+                                        )
+                                    )
+                                ),
+                                React.createElement('div', { className: 'flex-1 p-6 overflow-auto custom-scrollbar' },
+                                    React.createElement('h3', { className: 'text-xs font-black audit-color-update uppercase tracking-widest mb-4 flex items-center gap-2' },
+                                        React.createElement('i', { className: 'ph-bold ph-code' }),
+                                        " Dados Técnicos (JSON)"
+                                    ),
+                                    React.createElement('pre', { className: 'nx-audit-code-block border-blue-100 text-blue-600 bg-blue-50/30 dark:bg-[var(--nx-bg-panel)] dark:border-slate-800 dark:text-emerald-400' },
+                                        formatDetails(selectedLog.details)
+                                    )
+                                )
+                            )
+                        ) : (
+                            React.createElement('div', { className: 'flex flex-col items-center justify-center h-full text-blue-900/30 dark:text-slate-700 opacity-50' },
+                                React.createElement('i', { className: 'ph-duotone ph-shield-check text-6xl mb-4' }),
+                                React.createElement('p', { className: 'text-xs font-black uppercase tracking-[0.2em]' }, "Selecione um log para auditar")
+                            )
+                        )
+                    )
+                )
+            )
+        );
+    };
+
+    window.App.AuditLog = AuditLog;
+  })();
+</script>

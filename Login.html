@@ -1,0 +1,186 @@
+<script>
+  (function() {
+    window.App = window.App || {};
+
+    /* --- LoginInput Component (macOS style) --- */
+    var LoginInput = function LoginInput(props) {
+      var label = props.label, type = props.type || "text", value = props.value;
+      var onChange = props.onChange, disabled = props.disabled, icon = props.icon;
+      var autoFocus = props.autoFocus, error = props.error;
+      var wrapClass = 'nx-login-input-wrap' + (error ? ' has-error' : '');
+
+      return React.createElement('div', { className: wrapClass },
+        React.createElement('div', { className: 'nx-login-input-box' },
+          icon && React.createElement('div', { className: 'nx-login-input-icon' },
+            React.createElement('i', { className: 'ph ' + icon })
+          ),
+          React.createElement('input', {
+            type: type, value: value, onChange: onChange, disabled: disabled,
+            required: true, autoFocus: autoFocus, placeholder: label,
+            className: 'nx-login-input'
+          })
+        ),
+        error && React.createElement('div', { className: 'nx-login-error-msg' }, error)
+      );
+    };
+
+    /* --- Login Component (macOS Split v4.0) --- */
+    var Login = function Login(props) {
+      var onLoginAttempt = props.onLoginAttempt;
+      var HospitalLogo = (window.HospitalLogo && typeof window.HospitalLogo === 'function') ? window.HospitalLogo : null;
+
+      var _matricula = React.useState('');
+      var matricula = _matricula[0], setMatricula = _matricula[1];
+
+      var _loading = React.useState(false);
+      var loading = _loading[0], setLoading = _loading[1];
+
+      var _error = React.useState('');
+      var error = _error[0], setError = _error[1];
+
+      var _exiting = React.useState(false);
+      var exiting = _exiting[0], setExiting = _exiting[1];
+
+      var handleSubmit = async function(e) {
+        e.preventDefault();
+        if (!matricula) return;
+        setLoading(true);
+        setError('');
+        try {
+          await onLoginAttempt(matricula.trim().toUpperCase());
+          setExiting(true);
+        } catch (err) {
+          console.error("Login Error:", err);
+          setLoading(false);
+          setError(err.message || 'Erro de autenticação.');
+        }
+      };
+
+      var handleInputChange = function(e) {
+        if (error) setError('');
+        setMatricula(e.target.value.toUpperCase());
+      };
+
+      /* --- Logo elements --- */
+      var brandLogo;
+      if (HospitalLogo) {
+        brandLogo = React.createElement(HospitalLogo, { className: 'nx-login-brand-logo' });
+      } else {
+        brandLogo = React.createElement('div', { className: 'nx-login-brand-logo-fallback' },
+          React.createElement('i', { className: 'ph-bold ph-hospital' })
+        );
+      }
+
+      /* Mobile logo */
+      var mobileLogo;
+      if (HospitalLogo) {
+        mobileLogo = React.createElement(HospitalLogo, {
+          className: 'nx-login-mobile-logo',
+          style: { height: '3.5rem', width: 'auto' }
+        });
+      } else {
+        mobileLogo = React.createElement('div', { className: 'nx-login-mobile-logo-fallback' },
+          React.createElement('i', { className: 'ph-bold ph-hospital' })
+        );
+      }
+
+      /* --- Button content --- */
+      var btnContent;
+      if (loading) {
+        btnContent = React.createElement(React.Fragment, null,
+          React.createElement('i', { className: 'ph-bold ph-circle-notch nx-login-spinner' }),
+          React.createElement('span', null, 'Acessando...')
+        );
+      } else {
+        btnContent = React.createElement(React.Fragment, null,
+          'Entrar ',
+          React.createElement('i', { className: 'ph-bold ph-arrow-right nx-login-btn-arrow' })
+        );
+      }
+
+      /* --- Render --- */
+      return React.createElement('div', { className: 'nx-login' },
+
+        /* Split grid */
+        React.createElement('div', { className: 'nx-login-grid' },
+
+          /* ===== LEFT PANEL (2/3) — Branding ===== */
+          React.createElement('div', {
+            className: 'nx-login-brand' + (exiting ? ' exiting' : '')
+          },
+            React.createElement('div', { className: 'nx-login-brand-inner' },
+
+              /* Logo with glow */
+              React.createElement('div', { className: 'nx-login-brand-logo-wrap' },
+                React.createElement('div', { className: 'nx-login-brand-glow' }),
+                brandLogo
+              ),
+
+              /* Title */
+              React.createElement('h1', { className: 'nx-login-brand-title font-logo' }, 'SysGestão'),
+
+              /* Subtitle with lines */
+              React.createElement('div', { className: 'nx-login-brand-sub-wrap' },
+                React.createElement('div', { className: 'nx-login-brand-line' }),
+                React.createElement('span', { className: 'nx-login-brand-sub' }, 'Enterprise Health OS'),
+                React.createElement('div', { className: 'nx-login-brand-line' })
+              )
+            )
+          ),
+
+          /* ===== RIGHT PANEL (1/3) — Glass Form ===== */
+          React.createElement('div', {
+            className: 'nx-login-form-panel' + (exiting ? ' exiting' : '')
+          },
+
+            /* Mobile header */
+            React.createElement('div', { className: 'nx-login-mobile-header' },
+              mobileLogo,
+              React.createElement('span', { className: 'nx-login-mobile-title font-logo' }, 'SysGestão')
+            ),
+
+            /* Glass card */
+            React.createElement('div', { className: 'nx-login-glass' },
+
+              /* Greeting */
+              React.createElement('div', { className: 'nx-login-greeting' }, 'Olá!'),
+              React.createElement('p', { className: 'nx-login-subtitle' }, 'Bem-vindo ao painel de gestão.'),
+
+              /* Form */
+              React.createElement('form', { onSubmit: handleSubmit, className: 'nx-login-form' },
+                React.createElement(LoginInput, {
+                  label: 'Matrícula', type: 'password', value: matricula,
+                  onChange: handleInputChange, icon: 'ph-identification-card',
+                  autoFocus: true, error: error
+                }),
+                React.createElement('button', {
+                  type: 'submit',
+                  disabled: loading || !matricula,
+                  className: 'nx-login-btn'
+                }, btnContent)
+              ),
+
+              /* Disclaimer */
+              React.createElement('p', { className: 'nx-login-disclaimer' },
+                'Acesso Restrito \u2022 Uso Profissional'
+              )
+            ),
+
+            /* Footer inside panel */
+            React.createElement('footer', { className: 'nx-login-footer' },
+              React.createElement('span', { className: 'nx-login-footer-text' },
+                'SysGestão Tech 2026'
+              ),
+              React.createElement('span', { className: 'nx-login-footer-dot' }),
+              React.createElement('span', { className: 'nx-login-footer-author font-logo' },
+                'Guilherme Fonseca'
+              )
+            )
+          )
+        )
+      );
+    };
+
+    window.App.Login = Login;
+  })();
+</script>

@@ -1,0 +1,307 @@
+
+<script>
+  (function() {
+    window.App = window.App || {};
+
+    // Configuração de Navegação
+    const NAV_ITEMS = [
+      { label: 'Cenário Global', view: 'GLOBAL', icon: 'ph-squares-four' },
+      { label: 'Mapa de Leitos', view: 'BED_MAP', icon: 'ph-bed' },
+      { label: 'Registro Pacientes', view: 'PATIENT_REGISTER', icon: 'ph-user-plus' },
+      { label: 'Transferências', view: 'TRANSFER', icon: 'ph-arrows-left-right' },
+      { label: 'Controle P.A.', view: 'PA_CONTROL', icon: 'ph-first-aid-kit' },
+      { label: 'Altas / Óbitos', view: 'DISCHARGE_DEATH', icon: 'ph-clipboard-text' },
+      { label: 'Previsão', view: 'FORECAST', icon: 'ph-chart-line-up' },
+      { label: 'Plantão', view: 'SHIFT_HANDOVER', icon: 'ph-list-checks' },
+      { label: 'Relatórios', view: 'REPORTS', icon: 'ph-files' },
+      { label: 'Auditoria', view: 'AUDIT_LOG', icon: 'ph-shield-check', adminOnly: true },
+      { label: 'Configurações', view: 'SETTINGS', icon: 'ph-gear' },
+    ];
+
+    const Topbar = React.memo(() => {
+      const { 
+        activeView: currentView, 
+        setActiveView: onChangeView
+      } = window.App.Context.useUI();
+
+      const {
+        user,
+        handleLogout: onLogout
+      } = window.App.Context.useAuth();
+
+      const { netState } = window.App.Context.useSystem();
+      const { notifications, unreadCount, markAsRead } = window.App.Context.useNotifications();
+
+      const HospitalLogo = window.HospitalLogo;
+      const UI = window.App.UI || {};
+      const { useState, useEffect, useRef, useCallback } = React;
+
+      const [showLogoutModal, setShowLogoutModal] = useState(false);
+      const [isNavOpen, setIsNavOpen] = useState(false);
+      const [isNotifOpen, setIsNotifOpen] = useState(false);
+      const navTimeoutRef = useRef(null);
+      const navRef = useRef(null);
+
+      // --- TEMA (DARK/LIGHT) ---
+      const [isDark, setIsDark] = useState(true);
+
+      // Effect Inicial: Lê preferência ou padrão
+      useEffect(() => {
+          const savedTheme = window.App.safeStorage.getItem('nx-theme', true);
+          const htmlEl = document.documentElement;
+          if (savedTheme === 'light') {
+              setIsDark(false);
+              htmlEl.classList.remove('dark');
+          } else {
+              setIsDark(true);
+              htmlEl.classList.add('dark');
+          }
+      }, []);
+
+      const toggleTheme = () => {
+          const htmlEl = document.documentElement;
+          const newStatus = !isDark;
+          setIsDark(newStatus);
+          if (newStatus) {
+              htmlEl.classList.add('dark');
+              window.App.safeStorage.setItem('nx-theme', 'dark', true);
+          } else {
+              htmlEl.classList.remove('dark');
+              window.App.safeStorage.setItem('nx-theme', 'light', true);
+          }
+      };
+
+      // --- NAV MENU HOVER ---
+      const openNav = useCallback(() => {
+          clearTimeout(navTimeoutRef.current);
+          setIsNavOpen(true);
+      }, []);
+
+      const closeNav = useCallback(() => {
+          navTimeoutRef.current = setTimeout(() => setIsNavOpen(false), 150);
+      }, []);
+
+      // --- NOTIFICATION ---
+      const handleNotificationClick = (n) => {
+          markAsRead(n.id);
+          setIsNotifOpen(false);
+          if (n.actionLink) {
+              const view = n.actionLink.toUpperCase();
+              if (['BED_MAP', 'TRANSFER', 'PA_CONTROL', 'GLOBAL', 'PATIENT_REGISTER', 'DISCHARGE_DEATH', 'FORECAST', 'SHIFT_HANDOVER', 'REPORTS', 'AUDIT_LOG', 'SETTINGS'].includes(view)) {
+                  onChangeView(view);
+              }
+          }
+      };
+
+      // Close menus on click outside or Escape key
+      useEffect(() => {
+          const handleClick = (e) => {
+              if (navRef.current && !navRef.current.contains(e.target)) {
+                  setIsNavOpen(false);
+              }
+              if (isNotifOpen) setIsNotifOpen(false);
+          };
+          const handleKeyDown = (e) => {
+              if (e.key === 'Escape') {
+                  setIsNavOpen(false);
+                  setIsNotifOpen(false);
+              }
+          };
+          document.addEventListener('mousedown', handleClick);
+          document.addEventListener('keydown', handleKeyDown);
+          return () => {
+              document.removeEventListener('mousedown', handleClick);
+              document.removeEventListener('keydown', handleKeyDown);
+          };
+      }, [isNotifOpen]);
+
+      // --- HANDLERS ---
+      const handleNavigation = (view) => {
+        onChangeView(view);
+        setIsNavOpen(false);
+      };
+
+      const handleLogoutClick = () => {
+          setShowLogoutModal(true);
+      };
+
+      const confirmLogout = () => {
+          setShowLogoutModal(false);
+          if (onLogout) onLogout();
+      };
+
+      const isAdmin = (user && (user.role === 'ADMIN' || user.isAdmin === true || user.isAdmin === 'SIM' || user.nivel === 'ADMIN'));
+      const userName = user ? user.name : 'Usuário';
+      const userInitials = userName.split(' ').filter(Boolean).map(n => n[0]).slice(0, 2).join('').toUpperCase();
+
+      // --- LOGO ELEMENT ---
+      const logoEl = HospitalLogo
+        ? React.createElement(HospitalLogo, { className: 'nx-topbar-logo-img' })
+        : React.createElement('div', { className: 'nx-topbar-logo-fallback' },
+            React.createElement('i', { className: 'ph-bold ph-hospital' })
+          );
+
+      // --- NAV ITEMS ---
+      const navItems = NAV_ITEMS.map((item) => {
+          const userPermissions = user?.permissions || [];
+          const hasPerm = isAdmin || userPermissions.includes(item.view);
+          if (!hasPerm) return null;
+          const isActive = currentView === item.view;
+          return React.createElement('button',
+            { key: item.view, onClick: () => handleNavigation(item.view), className: 'nx-topbar-nav-item' + (isActive ? ' active' : '') },
+            React.createElement('i', { className: 'ph-bold ' + item.icon + ' nx-topbar-nav-icon' }),
+            React.createElement('span', { className: 'nx-topbar-nav-label' }, item.label),
+            isActive && React.createElement('div', { className: 'nx-topbar-nav-active-dot' })
+          );
+      });
+
+      // Divider before last 2 items (Settings + Admin)
+      const navDividerIdx = navItems.filter(Boolean).length - 2;
+
+      // --- RENDER ---
+      return React.createElement(React.Fragment, null,
+
+        // ===== TOPBAR =====
+        React.createElement('header', { className: 'nx-topbar' },
+
+          // LEFT: Logo with hover nav menu
+          React.createElement('div', { className: 'nx-topbar-left', ref: navRef },
+            React.createElement('div', {
+              className: 'nx-topbar-logo-trigger',
+              onMouseEnter: openNav,
+              onMouseLeave: closeNav,
+              onClick: () => setIsNavOpen(!isNavOpen)
+            },
+              logoEl,
+              React.createElement('i', { className: 'ph-bold ph-caret-down nx-topbar-logo-chevron' + (isNavOpen ? ' rotated' : '') })
+            ),
+
+            // Navigation Dropdown (Glassmorphism)
+            React.createElement('div', {
+              className: 'nx-topbar-nav-dropdown' + (isNavOpen ? ' open' : ''),
+              onMouseEnter: openNav,
+              onMouseLeave: closeNav
+            },
+              React.createElement('div', { className: 'nx-topbar-nav-dropdown-inner' },
+                // System label
+                React.createElement('div', { className: 'nx-topbar-nav-dropdown-header' },
+                  React.createElement('span', { className: 'nx-topbar-nav-dropdown-title' }, 'Navegação'),
+                  React.createElement('span', { className: 'nx-topbar-nav-dropdown-badge font-logo' }, 'SysGestão')
+                ),
+                navItems.map((item, idx) => {
+                  if (!item) return null;
+                  const showDivider = idx === navDividerIdx && navDividerIdx > 0;
+                  return React.createElement(React.Fragment, { key: idx },
+                    showDivider && React.createElement('div', { className: 'nx-topbar-nav-divider' }),
+                    item
+                  );
+                })
+              )
+            )
+          ),
+
+          // RIGHT: User info + actions
+          React.createElement('div', { className: 'nx-topbar-right' },
+
+            // Connection status (desktop only)
+            netState === 'BUSY' ?
+              React.createElement('span', { className: 'nx-topbar-status syncing' },
+                React.createElement('i', { className: 'ph-bold ph-cloud-arrow-up' }),
+                React.createElement('span', { className: 'nx-topbar-status-text' }, 'Sync')
+              ) :
+              React.createElement('span', { className: 'nx-topbar-status connected' },
+                React.createElement('i', { className: 'ph-bold ph-circle-fill' })
+              ),
+
+            // User name
+            React.createElement('span', { className: 'nx-topbar-username' }, userName),
+
+            // Notification Bell
+            React.createElement('div', { className: 'nx-topbar-bell-wrap' },
+              React.createElement('button', {
+                className: 'nx-topbar-icon-btn',
+                onClick: () => setIsNotifOpen(!isNotifOpen),
+                title: 'Notificações'
+              },
+                React.createElement('i', { className: 'ph-bold ph-bell' + (unreadCount > 0 ? ' animate-swing' : '') }),
+                unreadCount > 0 && React.createElement('span', { className: 'nx-topbar-badge' }, unreadCount)
+              ),
+
+              // Notification Dropdown
+              isNotifOpen && React.createElement('div', { className: 'nx-topbar-notif-dropdown' },
+                React.createElement('div', { className: 'nx-topbar-notif-header' },
+                  React.createElement('span', { className: 'nx-topbar-notif-title' }, 'Notificações'),
+                  React.createElement('button', { onClick: () => setIsNotifOpen(false), className: 'nx-topbar-notif-close' },
+                    React.createElement('i', { className: 'ph-bold ph-x' })
+                  )
+                ),
+                React.createElement('div', { className: 'nx-topbar-notif-list custom-scrollbar' },
+                  notifications.length === 0 ?
+                    React.createElement('div', { className: 'nx-topbar-notif-empty' },
+                      React.createElement('i', { className: 'ph-duotone ph-bell-slash' }),
+                      React.createElement('span', null, 'Sem novos alertas')
+                    ) :
+                    notifications.map(n => React.createElement('div', {
+                      key: n.id,
+                      className: 'nx-topbar-notif-item' + (n.type ? ' type-' + String(n.type).toLowerCase() : ''),
+                      onClick: () => handleNotificationClick(n)
+                    },
+                      React.createElement('div', { className: 'nx-topbar-notif-item-head' },
+                        n.type && React.createElement('span', { className: 'nx-topbar-notif-type' }, n.type),
+                        React.createElement('span', { className: 'nx-topbar-notif-time' },
+                          new Date(n.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        )
+                      ),
+                      React.createElement('p', { className: 'nx-topbar-notif-msg' }, n.message)
+                    ))
+                )
+              )
+            ),
+
+            // Theme Toggle
+            React.createElement('button', {
+              onClick: toggleTheme,
+              className: 'nx-topbar-icon-btn',
+              title: isDark ? 'Modo Claro' : 'Modo Escuro'
+            },
+              React.createElement('i', { className: 'ph-fill ' + (isDark ? 'ph-sun' : 'ph-moon') + ' nx-topbar-theme-icon' })
+            ),
+
+            // Logout
+            React.createElement('button', {
+              onClick: handleLogoutClick,
+              className: 'nx-topbar-icon-btn nx-topbar-logout-btn',
+              title: 'Sair'
+            },
+              React.createElement('i', { className: 'ph-bold ph-sign-out' })
+            )
+          )
+        ),
+
+        // Logout Modal
+        React.createElement(UI.Modal, {
+          isOpen: showLogoutModal,
+          onClose: () => setShowLogoutModal(false),
+          size: 'small',
+          className: 'nx-topbar-logout-modal'
+        },
+          React.createElement('div', { className: 'nx-topbar-logout-modal-body' },
+            React.createElement('div', { className: 'nx-error-icon nx-topbar-logout-modal-icon' },
+              React.createElement('i', { className: 'ph-bold ph-sign-out nx-topbar-logout-icon' })
+            ),
+            React.createElement('h3', { className: 'nx-error-title', style: { marginBottom: '0.5rem' } }, 'Encerrar Sessão?'),
+            React.createElement('p', { className: 'nx-error-text', style: { marginBottom: '1.5rem' } },
+              'Você será desconectado e os dados locais serão sincronizados.'
+            ),
+            React.createElement('div', { className: 'nx-error-actions' },
+              React.createElement('button', { onClick: () => setShowLogoutModal(false), className: 'btn-action-cancel' }, 'Cancelar'),
+              React.createElement('button', { onClick: confirmLogout, className: 'btn-action-confirm' }, 'Sair')
+            )
+          )
+        )
+      );
+    });
+
+    window.App.Sidebar = Topbar;
+  })();
+</script>

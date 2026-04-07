@@ -1,0 +1,623 @@
+<script>
+  (function() {
+    window.App = window.App || {};
+
+    var BedMap = function() {
+        // --- CONTEXT (SPLIT FOR PERFORMANCE) ---
+        var dataCtx = window.App.Context.useData();
+        var structure = dataCtx.structure;
+        var patientsList = dataCtx.patientsList;
+        var reservationsList = dataCtx.reservationsList;
+        var blockedBedsList = dataCtx.blockedBedsList;
+        var preloadedForecast = dataCtx.preloadedForecast;
+        var paList = dataCtx.paList;
+        var transferList = dataCtx.transferList;
+
+        var authCtx = window.App.Context.useAuth();
+        var user = authCtx.user;
+
+        var uiCtx = window.App.Context.useUI();
+        var simulationState = uiCtx.simulationState;
+
+        var systemCtx = window.App.Context.useSystem();
+        var actions = systemCtx.actions;
+        var globalTime = systemCtx.globalTime;
+
+        var notifCtx = window.App.Context.useNotifications();
+        var createNotification = notifCtx.createNotification || function() {};
+
+        var UI = window.App.UI || {};
+        var Utils = window.App.Utils || {};
+        var Intelligence = window.App.Intelligence || {};
+
+        // --- UX OTIMISTA via HOOKS ---
+        var optimisticHook = window.App.Hooks.useOptimisticAction();
+        var isOptimistic = optimisticHook.isOptimistic;
+        var runOptimistic = optimisticHook.run;
+
+        var localPatientsHook = window.App.Hooks.useLocalState(patientsList || [], isOptimistic);
+        var localPatients = localPatientsHook[0];
+        var setLocalPatients = localPatientsHook[1];
+
+        var localBlockedHook = window.App.Hooks.useLocalState(blockedBedsList || [], isOptimistic);
+        var localBlocked = localBlockedHook[0];
+        var setLocalBlocked = localBlockedHook[1];
+
+        // --- TIMER UPDATE (A CADA 1 MINUTO) ---
+        // Removido timer local, usando globalTime do Context
+        var currentTime = globalTime || new Date();
+
+        // Helper de Formatação de Duração (Genérico)
+        var getElapsedDuration = React.useCallback(function(dateStr) {
+            if (!dateStr) return '';
+            var start = new Date(dateStr);
+            if (isNaN(start.getTime())) return '';
+
+            // Usa getTime() para garantir operação numérica segura
+            var diffMs = currentTime.getTime() - start.getTime();
+
+            // Proteção contra datas no futuro
+            if (diffMs < 0) diffMs = 0;
+
+            var totalHours = Math.floor(diffMs / (1000 * 60 * 60));
+
+            // Se passar de 24h, mostra em dias
+            if (totalHours >= 24) {
+                var days = Math.floor(totalHours / 24);
+                var remainingHours = totalHours % 24;
+                return days + 'd ' + remainingHours + 'h';
+            }
+
+            var mins = Math.floor((diffMs % (1000 * 60 * 60)) / 60000);
+
+            if (totalHours > 0) return totalHours + 'h ' + mins + 'm';
+            return mins + ' min';
+        }, [currentTime]);
+
+        // Helper de Dias de Internação
+        var getStayDuration = function(dateStr) {
+            if(!dateStr) return '-';
+            var start = new Date(dateStr);
+            var diff = currentTime - start;
+            if(isNaN(diff) || diff < 0) return '0 DIAS';
+            var days = Math.floor(diff / (1000 * 60 * 60 * 24));
+            return days + ' DIAS';
+        };
+
+        // Nota: confirmações agora utilizam o modal centralizado `UI.confirmThen()` (removido estado local)
+
+        var searchTermState = React.useState('');
+        var searchTerm = searchTermState[0];
+        var setSearchTerm = searchTermState[1];
+
+        // Auto-detect Mobile para View Mode (Lista se < 1024px)
+        var viewModeState = React.useState(function() { return window.innerWidth < 1024 ? 'LIST' : 'GRID'; });
+        var viewMode = viewModeState[0];
+        var setViewMode = viewModeState[1];
+
+        React.useEffect(function() {
+            var handleResize = function() {
+                if (window.innerWidth < 1024) setViewMode('LIST');
+                else setViewMode('GRID');
+            };
+            window.addEventListener('resize', handleResize);
+            return function() { window.removeEventListener('resize', handleResize); };
+        }, []);
+
+        var actionMenuState = React.useState(null);
+        var actionMenu = actionMenuState[0];
+        var setActionMenu = actionMenuState[1];
+
+        var hoveredBedState = React.useState(null);
+        var hoveredBed = hoveredBedState[0];
+        var setHoveredBed = hoveredBedState[1];
+
+        var tooltipPosState = React.useState({ x: 0, y: 0 });
+        var tooltipPos = tooltipPosState[0];
+        var setTooltipPos = tooltipPosState[1];
+
+        var quickRegState = React.useState({ show: false, bed: '', sector: '', patientIdToEdit: null });
+        var quickReg = quickRegState[0];
+        var setQuickReg = quickRegState[1];
+
+        var quickRegDataState = React.useState({ name: '', attendance: '', insurance: '' });
+        var quickRegData = quickRegDataState[0];
+        var setQuickRegData = quickRegDataState[1];
+
+        var blockModalState = React.useState({ show: false, bed: '', reason: '' });
+        var blockModal = blockModalState[0];
+        var setBlockModal = blockModalState[1];
+
+        var reservationModalState = React.useState({ show: false, bed: '', patientName: '' });
+        var reservationModal = reservationModalState[0];
+        var setReservationModal = reservationModalState[1];
+
+        var transferModalState = React.useState({ show: false, patient: null, currentBed: '' });
+        var transferModal = transferModalState[0];
+        var setTransferModal = transferModalState[1];
+
+        var targetBedState = React.useState('');
+        var targetBed = targetBedState[0];
+        var setTargetBed = targetBedState[1];
+
+        var INSURANCE_OPTIONS = window.App.INSURANCE_OPTIONS || [];
+
+        // --- CÁLCULO CENTRALIZADO DO ESTADO ---
+        var hospitalState = React.useMemo(function() {
+            var todayISO = new Date().toISOString().split('T')[0];
+            var forecastData = preloadedForecast ? (preloadedForecast[todayISO] || {}) : {};
+            var scenario = Object.assign({}, simulationState);
+
+            if (forecastData.forecast) {
+                Object.keys(forecastData.forecast).forEach(function(k) {
+                    if (scenario[Utils.normalize(k)] === undefined) scenario[Utils.normalize(k)] = forecastData.forecast[k];
+                });
+            }
+            return Intelligence.processHospitalState({ structure: structure, patientsList: localPatients, blockedBedsList: localBlocked, paList: paList, transferList: transferList, preloadedForecast: { forecast: forecastData.forecast || {}, reserves: forecastData.reserves || {} } }, scenario);
+        }, [structure, localPatients, localBlocked, preloadedForecast, paList, transferList, Utils, Intelligence, simulationState]);
+
+        var bedStatusMap = React.useMemo(function() {
+            var map = {};
+            if(!structure || !structure.beds) return map;
+
+            var pMap = {};
+            (localPatients || []).forEach(function(p) {
+                if(p.bed && !['SIM','ALTA','OBITO'].includes(p.dischargeStatus)) pMap[Utils.normalize(p.bed)] = p;
+            });
+
+            var bMap = {};
+            (localBlocked || []).forEach(function(b) { bMap[Utils.normalize(b.bed)] = b; });
+
+            structure.beds.forEach(function(bed) {
+                var norm = Utils.normalize(bed.number);
+                var status = 'AVAILABLE';
+                var data = null;
+
+                if (bMap[norm]) {
+                    var reason = (bMap[norm].reason || '').toUpperCase();
+                    if (reason.includes('HIGIEN') || reason.includes('LIMPEZA')) { status = 'CLEANING'; data = bMap[norm]; }
+                    else if (reason.includes('RESERVA')) {
+                        status = 'RESERVED';
+                        var manualName = reason.replace('RESERVA:', '').replace('RESERVA', '').trim();
+                        data = Object.assign({}, bMap[norm], { patientName: manualName || 'MANUAL' });
+                    } else { status = 'MAINTENANCE'; data = bMap[norm]; }
+                } else if (pMap[norm]) { status = 'OCCUPIED'; data = pMap[norm]; }
+
+                map[norm] = {
+                    status: status,
+                    data: data,
+                    number: bed.number,
+                    sector: bed.sector,
+                    type: bed.type,
+                    order: bed.order,
+                    characteristics: bed.characteristics || ''
+                };
+            });
+            return map;
+        }, [structure, localPatients, localBlocked, Utils]);
+
+        // --- VISÃO ORDENADA ---
+        var sortedSectors = React.useMemo(function() {
+            var sectorsSource = structure && (structure.sectors || structure.layoutSectors) || [];
+            if (sectorsSource.length === 0) return [];
+            var term = searchTerm.toUpperCase();
+
+            return sectorsSource
+                .filter(function(sec) { return !sec.isVirtual; })
+                .map(function(sec) {
+                    var o = sec.order;
+                    if (o === null || o === undefined || o === '') o = 999;
+                    var parsed = parseInt(o, 10);
+                    return Object.assign({}, sec, { _safeOrder: isNaN(parsed) ? 999 : parsed });
+                })
+                .sort(function(a, b) {
+                    if (a._safeOrder !== b._safeOrder) return a._safeOrder - b._safeOrder;
+                    return a.name.localeCompare(b.name);
+                })
+                .map(function(sec) {
+                    var sectorBeds = (structure.beds || [])
+                        .filter(function(b) { return b.sector === sec.name; })
+                        .map(function(b) { return bedStatusMap[Utils.normalize(b.number)]; })
+                        .filter(function(b) {
+                            if (!b) return false;
+                            if (!term) return true;
+                            var matchesBed = String(b.number).includes(term);
+                            var matchesPatient = b.data && (b.data.name || b.data.patientName) && String(b.data.name || b.data.patientName).toUpperCase().includes(term);
+                            return matchesBed || matchesPatient;
+                        })
+                        .sort(function(a, b) {
+                            var orderA = a.order; if(orderA===null||orderA===undefined||orderA==='') orderA=999;
+                            var orderB = b.order; if(orderB===null||orderB===undefined||orderB==='') orderB=999;
+                            var parsedA = parseInt(orderA, 10);
+                            var parsedB = parseInt(orderB, 10);
+                            var safeA = isNaN(parsedA) ? 999 : parsedA;
+                            var safeB = isNaN(parsedB) ? 999 : parsedB;
+                            if (safeA !== safeB) return safeA - safeB;
+                            return String(a.number).localeCompare(String(b.number), undefined, { numeric: true, sensitivity: 'base' });
+                        });
+
+                    var secStats = hospitalState && hospitalState.stats && hospitalState.stats.sectors && hospitalState.stats.sectors[Utils.normalize(sec.name)];
+                    return Object.assign({}, sec, { beds: sectorBeds, divergence: secStats ? secStats.divergence : 0, stats: secStats });
+                })
+                .filter(function(s) { return s.beds.length > 0; });
+        }, [structure, bedStatusMap, searchTerm, Utils, hospitalState]);
+
+        // --- CÁLCULO DO GAP ---
+        var gapStats = React.useMemo(function() {
+            return hospitalState && hospitalState.stats && hospitalState.stats.gaps || { ui: 0, cti: 0 };
+        }, [hospitalState]);
+
+        // --- STATS COM CÁLCULO DE MÉDIA DE HIGIENIZAÇÃO ---
+        var stats = React.useMemo(function() {
+            var counts = { OCCUPIED: 0, AVAILABLE: 0, MAINTENANCE: 0, RESERVED: 0, CLEANING: 0, TOTAL: structure && structure.beds && structure.beds.filter(function(b) { return !b.isVirtual; }).length || 0 };
+
+            var totalCleaningMs = 0;
+            var cleaningCount = 0;
+
+            Object.values(bedStatusMap).forEach(function(b) {
+                if (counts[b.status] !== undefined) counts[b.status]++;
+
+                if (b.status === 'CLEANING' && b.data && b.data.date) {
+                    var start = new Date(b.data.date);
+                    if (!isNaN(start.getTime())) {
+                        var diff = currentTime - start;
+                        if (diff > 0) {
+                            totalCleaningMs += diff;
+                            cleaningCount++;
+                        }
+                    }
+                }
+            });
+
+            var CleanValue = function() {
+                return React.createElement('span', { className: 'leading-tight' },
+                    counts.CLEANING,
+                    React.createElement('span', { className: 'text-[10px] ml-1 font-bold uppercase opacity-0 select-none' }, 'min')
+                );
+            };
+
+            var TimeValue = function() {
+                if (cleaningCount === 0) {
+                    return React.createElement('span', { className: 'leading-tight' },
+                        '0',
+                        React.createElement('span', { className: 'text-[10px] ml-1 font-bold opacity-60 uppercase' }, 'min')
+                    );
+                }
+                var avgMs = totalCleaningMs / cleaningCount;
+                var hours = Math.floor(avgMs / (1000 * 60 * 60));
+                var mins = Math.floor((avgMs % (1000 * 60 * 60)) / 60000);
+
+                if (hours > 0) {
+                    return React.createElement('span', { className: 'leading-tight' },
+                        hours,
+                        React.createElement('span', { className: 'text-[10px] ml-0.5 mr-1 font-bold opacity-60 uppercase' }, 'h'),
+                        mins,
+                        React.createElement('span', { className: 'text-[10px] ml-0.5 font-bold opacity-60 uppercase' }, 'm')
+                    );
+                }
+                return React.createElement('span', { className: 'leading-tight' },
+                    mins,
+                    React.createElement('span', { className: 'text-[10px] ml-1 font-bold opacity-60 uppercase' }, 'min')
+                );
+            };
+
+            return Object.assign({}, counts, { cleanVal: React.createElement(CleanValue), timeVal: React.createElement(TimeValue) });
+        }, [bedStatusMap, structure, currentTime]);
+
+        // --- HANDLERS (Omitted for brevity, logic remains same) ---
+        var handleOccupyInstant = async function(bed, sector) {
+            var ok = await UI.confirmThen('Confirmar ocupação imediata para o leito ' + bed.number + '?');
+            if (!ok) return;
+            runOptimistic(
+                function() { var tempP = { id: 'temp-'+Date.now(), name: 'OCUPADO', bed: bed.number, sector: sector, dischargeStatus: 'NAO', insurance: 'PARTICULAR' }; setLocalPatients(function(prev) { return prev.concat([tempP]); }); },
+                function() { return actions.bedAction('OCCUPY', { bed: bed.number, sector: sector }); }
+            );
+            setActionMenu(null);
+        };
+
+        var handleSetCleaning = function(bed) {
+            runOptimistic(
+                function() { setLocalBlocked(function(prev) { return prev.concat([{ id: 'temp-'+Date.now(), bed: bed.number, reason: 'HIGIENIZACAO', user: user.name, date: new Date().toISOString() }]); }); },
+                async function() {
+                    await actions.bedAction('BLOCK', { bed: bed.number, reason: 'HIGIENIZACAO', user: user.name });
+                    createNotification({
+                        targetRole: 'HIGIENE',
+                        type: 'LIMPEZA',
+                        message: 'Solicitação de higienização para o leito ' + bed.number + ' (' + bed.sector + ').',
+                        actionLink: 'BED_MAP'
+                    });
+                }
+            );
+            setActionMenu(null);
+        };
+
+        var handleFinishCleaning = function(bed) {
+            runOptimistic(
+                function() { setLocalBlocked(function(prev) { return prev.filter(function(b) { return b.bed !== bed.number; }); }); },
+                function() { return actions.bedAction('UNBLOCK', { bed: bed.number }); }
+            );
+            setActionMenu(null);
+        };
+
+        var handleManualReserve = function(e) {
+            e.preventDefault();
+            if(!reservationModal.patientName) return;
+            var reason = 'RESERVA: ' + reservationModal.patientName.toUpperCase();
+            runOptimistic(
+                function() { setLocalBlocked(function(prev) { return prev.concat([{ id: 'temp-'+Date.now(), bed: reservationModal.bed, reason: reason, user: user.name }]); }); },
+                function() { return actions.bedAction('BLOCK', { bed: reservationModal.bed, reason: reason, user: user.name }); }
+            );
+            setReservationModal({ show: false, bed: '', patientName: '' });
+            setActionMenu(null);
+        };
+
+        var handleAdmitFromReservation = function(bed, patientName) {
+            runOptimistic(
+                function() { setLocalBlocked(function(prev) { return prev.filter(function(b) { return b.bed !== bed.number; }); }); },
+                function() { return actions.bedAction('UNBLOCK', { bed: bed.number }); }
+            );
+            setTimeout(function() {
+                setQuickReg({ show: true, bed: bed.number, sector: bed.sector });
+                setQuickRegData({ name: patientName, attendance: '', insurance: '' });
+                setActionMenu(null);
+            }, 300);
+        };
+
+        var handleConvertTempToFixed = function(patient) {
+            setQuickReg({ show: true, bed: patient.bed, sector: patient.sector, patientIdToEdit: patient.id });
+            setQuickRegData({
+                name: patient.name === 'OCUPADO' ? '' : patient.name,
+                attendance: patient.attendance === 'MANUAL' ? '' : patient.attendance,
+                insurance: patient.insurance || 'PARTICULAR'
+            });
+            setActionMenu(null);
+        };
+
+        var handleBlockConfirm = function() {
+            if (blockModal.reason) {
+                var r = blockModal.reason; var b = blockModal.bed;
+                // Add current date for timer
+                runOptimistic(
+                    function() { setLocalBlocked(function(prev) { return prev.concat([{ id: 'temp-'+Date.now(), bed: b, reason: r, user: user.name, date: new Date().toISOString() }]); }); },
+                    function() { return actions.bedAction('BLOCK', { bed: b, reason: r }); }
+                );
+                setBlockModal({ show: false, bed: '', reason: '' });
+                setActionMenu(null);
+            }
+        };
+
+        var handleUnblock = function(bed) {
+            runOptimistic(
+                function() { setLocalBlocked(function(prev) { return prev.filter(function(b) { return b.bed !== bed.number; }); }); },
+                function() { return actions.bedAction('UNBLOCK', { bed: bed.number }); }
+            );
+            setActionMenu(null);
+        };
+
+        var handleDischarge = async function(patient, bed) {
+            var ok = await UI.confirmThen('Confirmar alta para ' + patient.name + ' e liberar o leito?');
+            if (!ok) return;
+            var payload = { id: String(Date.now()), attendance: patient.attendance || 'S/N', patientName: patient.name, insurance: patient.insurance, originBed: bed.number, reason: 'ALTA_CASA', released: 'SIM', date: new Date().toISOString().split('T')[0] };
+            runOptimistic(
+                function() {
+                    setLocalPatients(function(prev) { return prev.filter(function(p) { return p.id !== patient.id; }); });
+                    setLocalBlocked(function(prev) { return prev.concat([{ id: 'temp-'+Date.now(), bed: bed.number, reason: 'HIGIENIZACAO', user: user.name, date: new Date().toISOString() }]); });
+                },
+                async function() {
+                    await actions.dischargeWithCleaning(payload, bed.number, user.matricula);
+                    createNotification({
+                        targetRole: 'HIGIENE',
+                        type: 'LIMPEZA',
+                        message: 'Leito ' + bed.number + ' (' + bed.sector + ') liberado após alta de ' + patient.name + '. Necessita higienização.',
+                        actionLink: 'BED_MAP'
+                    });
+                }
+            );
+            setActionMenu(null);
+        };
+
+        var handleTransferConfirm = async function() {
+            if (!targetBed) return;
+            var patient = transferModal.patient;
+            var oldBed = transferModal.currentBed;
+            var newBedObj = structure.beds.find(function(b) { return b.number === targetBed; });
+            var newSector = newBedObj ? newBedObj.sector : (patient.sector || 'INDEFINIDO');
+
+            runOptimistic(
+                function() {
+                    setLocalPatients(function(prev) { return prev.map(function(p) { return p.id === patient.id ? Object.assign({}, p, { bed: targetBed, sector: newSector }) : p; }); });
+                    if (oldBed) setLocalBlocked(function(prev) { return prev.concat([{ id: 'temp-'+Date.now(), bed: oldBed, reason: 'HIGIENIZACAO', user: user.name, date: new Date().toISOString() }]); });
+                },
+                async function() {
+                    await actions.executeInternalTransfer(patient.id, oldBed, targetBed, newSector, user.matricula);
+                    if (oldBed) {
+                        createNotification({
+                            targetRole: 'HIGIENE',
+                            type: 'LIMPEZA',
+                            message: 'Leito ' + oldBed + ' liberado após transferência de ' + patient.name + '. Necessita higienização.',
+                            actionLink: 'BED_MAP'
+                        });
+                    }
+                }
+            );
+            setTransferModal({ show: false, patient: null, currentBed: '' });
+            setActionMenu(null);
+        };
+
+        var handleQuickSave = async function(e) {
+            e.preventDefault();
+            var payload = { id: quickReg.patientIdToEdit || String(Date.now()), name: quickRegData.name, attendance: quickRegData.attendance, insurance: quickRegData.insurance, bed: quickReg.bed, sector: quickReg.sector, dischargeStatus: 'NAO', priority: false };
+            runOptimistic(
+                function() { if (quickReg.patientIdToEdit) setLocalPatients(function(prev) { return prev.map(function(p) { return p.id === payload.id ? Object.assign({}, p, payload) : p; }); }); else setLocalPatients(function(prev) { return prev.concat([payload]); }); },
+                async function() {
+                    if (quickReg.patientIdToEdit) {
+                        await actions.updatePatient(payload);
+                    } else {
+                        await actions.savePatient(payload);
+                    }
+                }
+            );
+            setQuickReg({ show: false, bed: '', sector: '', patientIdToEdit: null });
+            setActionMenu(null);
+        };
+
+        var handleReleaseFastOccupancy = async function(patient) {
+            var ok = await UI.confirmThen('Tem certeza? O registro provisório será excluído permanentemente.');
+            if (!ok) return;
+            runOptimistic(
+                function() { setLocalPatients(function(prev) { return prev.filter(function(p) { return p.id !== patient.id; }); }); },
+                function() { return actions.deletePatient(patient.id); }
+            );
+            setActionMenu(null);
+        };
+
+        var handleBedClick = function(e, bed, sectorName) { e.stopPropagation(); setActionMenu({ bed: bed, sectorName: sectorName }); };
+        var handleMouseEnter = function(e, bed) {
+            if(viewMode === 'LIST' || actionMenu) return;
+            var rect = e.currentTarget.getBoundingClientRect();
+            setTooltipPos({ x: rect.left + rect.width / 2, y: rect.top - 10 });
+            setHoveredBed(bed);
+        };
+        var availableBedsList = React.useMemo(function() { return Object.values(bedStatusMap).filter(function(b) { return b.status === 'AVAILABLE'; }).map(function(b) { return b.number; }).sort(function(a,b) { return a.localeCompare(b, undefined, {numeric: true}); }); }, [bedStatusMap]);
+
+        var BedMapComponents = window.App.BedMapComponents || {};
+        var BedBox = BedMapComponents.BedBox;
+        var SectorCard = BedMapComponents.SectorCard;
+        var BedListItem = BedMapComponents.BedListItem;
+        var BedMapTooltip = window.App.BedMapTooltip || (function() { return null; });
+        var BedMapModals = window.App.BedMapModals || (function() { return null; });
+
+        if (!BedBox || !SectorCard || !BedListItem) {
+            return React.createElement('div', { className: 'p-10 text-rose-500 font-mono' }, 'Erro: Componentes do Mapa de Leitos não carregados.');
+        }
+
+        return React.createElement('div', { className: 'nx-bedmap-container' },
+            React.createElement('div', { className: 'nx-header print-hidden' },
+                React.createElement('div', { className: 'nx-header-title-group' },
+                    React.createElement('h1', { className: 'nx-header-title' }, 'Mapa de Leitos'),
+                    React.createElement('p', { className: 'nx-header-subtitle' }, 'Visão Operacional em Tempo Real')
+                ),
+                React.createElement('div', { className: 'flex items-center gap-4' },
+                    React.createElement('div', { className: 'nx-bedmap-search-group' },
+                        React.createElement('span', { className: 'nx-bedmap-search-label' }, 'Buscar Leito'),
+                        React.createElement('div', { className: 'relative' },
+                            React.createElement('input', { type: 'text', value: searchTerm, onChange: function(e) { setSearchTerm(e.target.value); }, className: 'nx-bedmap-search-input' }),
+                            React.createElement('i', { className: 'ph-bold ph-magnifying-glass nx-bedmap-search-icon' })
+                        )
+                    ),
+                    React.createElement('div', { className: 'nx-bedmap-view-toggle' },
+                        React.createElement('button', { onClick: function() { setViewMode('GRID'); }, className: 'nx-bedmap-view-btn ' + (viewMode === 'GRID' ? 'active' : '') },
+                            React.createElement('i', { className: 'ph-bold ph-grid-four text-xl' })
+                        ),
+                        React.createElement('button', { onClick: function() { setViewMode('LIST'); }, className: 'nx-bedmap-view-btn ' + (viewMode === 'LIST' ? 'active' : '') },
+                            React.createElement('i', { className: 'ph-bold ph-list-bullets text-xl' })
+                        )
+                    )
+                )
+            ),
+            React.createElement('div', { className: 'nx-header-divider print-hidden' }),
+
+            React.createElement('div', null,
+                React.createElement('div', { className: 'nx-kpi-grid-6 mb-8' },
+                   React.createElement(UI.KPICard, { label: 'Ocupados', data: [{value: stats.OCCUPIED, label: 'Total'}], theme: 'kpi-rose', icon: 'ph-bed' }),
+                   React.createElement(UI.KPICard, { label: 'Vagos', data: [{value: stats.AVAILABLE, label: 'Livres'}], theme: 'kpi-emerald', icon: 'ph-check-circle' }),
+                   React.createElement(UI.KPICard, {
+                        label: 'Higienização',
+                        data: [
+                            {value: stats.cleanVal, label: 'Total'},
+                            {value: stats.timeVal, label: 'Tempo Médio'}
+                        ],
+                        theme: 'kpi-purple',
+                        icon: 'ph-broom'
+                   }),
+                   React.createElement(UI.KPICard, { label: 'Bloqueados', data: [{value: stats.MAINTENANCE, label: 'Manut.'}], theme: 'kpi-slate', icon: 'ph-prohibit' }),
+                   React.createElement(UI.KPICard, { label: 'Reservados', data: [{value: stats.RESERVED, label: 'Fila'}], theme: 'kpi-amber', icon: 'ph-lock-key' }),
+                   React.createElement(UI.KPICard, {
+                        label: 'Saldo Devedor',
+                        icon: 'ph-scales',
+                        theme: (gapStats.ui < 0 || gapStats.cti < 0) ? 'kpi-rose' : 'kpi-slate',
+                        className: (gapStats.ui < 0 || gapStats.cti < 0) ? 'animate-pulse border-rose-500' : '',
+                        data: [
+                            { value: gapStats.ui, label: 'UI' },
+                            { value: gapStats.cti, label: 'CTI' }
+                        ]
+                   })
+                ),
+
+                viewMode === 'GRID' ? (
+                    React.createElement('div', { className: 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 pb-20' },
+                        sortedSectors.length > 0 ? sortedSectors.map(function(sector) {
+                            return React.createElement(SectorCard, {
+                                key: sector.name,
+                                sector: sector,
+                                handleBedClick: handleBedClick,
+                                handleMouseEnter: handleMouseEnter,
+                                setHoveredBed: setHoveredBed,
+                                getElapsedDuration: getElapsedDuration
+                            });
+                        }) : (
+                            React.createElement('div', { className: 'nx-bedmap-empty-state' },
+                                React.createElement('i', { className: 'ph-bold ph-magnifying-glass nx-bedmap-empty-icon' }),
+                                React.createElement('p', { className: 'nx-bedmap-empty-text' }, 'Nenhum leito encontrado')
+                            )
+                        )
+                    )
+                ) : (
+                    React.createElement('div', { className: 'flex flex-col gap-8 pb-20' },
+                        sortedSectors.length > 0 ? sortedSectors.map(function(sector) {
+                            return React.createElement('div', { key: sector.name, className: 'flex flex-col gap-4' },
+                                React.createElement('div', { className: 'nx-bedmap-list-sector-header' },
+                                    React.createElement('div', { className: 'flex items-center' },
+                                        React.createElement('span', { className: 'w-1.5 h-6 rounded-full mr-4 ' + (['CTI','UTI','CETIPE'].some(function(k){return sector.type.includes(k)}) ? 'bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.5)]' : 'bg-blue-500 shadow-[0_0_10px_rgba(37,99,235,0.5)]') }),
+                                        React.createElement('h3', { className: 'nx-bedmap-list-sector-title' }, sector.name)
+                                    ),
+                                    React.createElement('div', { className: 'flex items-center gap-2' },
+                                        React.createElement('span', { className: 'nx-bedmap-list-sector-stats' }, 'VAGOS: ' + (sector.stats ? sector.stats.free : 0) + ' / ' + sector.beds.length)
+                                    )
+                                ),
+                                React.createElement('div', { className: 'nx-bedmap-list-grid' },
+                                    sector.beds.map(function(bed) {
+                                        return React.createElement(BedListItem, {
+                                            key: bed.number,
+                                            bed: bed,
+                                            sectorName: sector.name,
+                                            handleBedClick: handleBedClick,
+                                            getElapsedDuration: getElapsedDuration
+                                        });
+                                    })
+                                )
+                            );
+                        }) : (
+                            React.createElement('div', { className: 'nx-bedmap-empty-state' },
+                                React.createElement('i', { className: 'ph-bold ph-magnifying-glass nx-bedmap-empty-icon' }),
+                                React.createElement('p', { className: 'nx-bedmap-empty-text' }, 'Nenhum leito encontrado')
+                            )
+                        )
+                    )
+                )
+            ),
+
+            React.createElement(BedMapTooltip, {
+                hoveredBed: hoveredBed,
+                tooltipPos: tooltipPos,
+                getElapsedDuration: getElapsedDuration,
+                getStayDuration: getStayDuration
+            }),
+
+            React.createElement(BedMapModals, {
+                actionMenu: actionMenu, setActionMenu: setActionMenu,
+                blockModal: blockModal, setBlockModal: setBlockModal, handleBlockConfirm: handleBlockConfirm,
+                reservationModal: reservationModal, setReservationModal: setReservationModal, handleManualReserve: handleManualReserve,
+                transferModal: transferModal, setTransferModal: setTransferModal, handleTransferConfirm: handleTransferConfirm, targetBed: targetBed, setTargetBed: setTargetBed,
+                quickReg: quickReg, setQuickReg: setQuickReg, quickRegData: quickRegData, setQuickRegData: setQuickRegData, handleQuickSave: handleQuickSave,
+                structure: structure, patientsList: patientsList, blockedBedsList: blockedBedsList,
+                handleOccupyInstant: handleOccupyInstant, handleSetCleaning: handleSetCleaning, handleFinishCleaning: handleFinishCleaning, handleUnblock: handleUnblock,
+                handleAdmitFromReservation: handleAdmitFromReservation, handleConvertTempToFixed: handleConvertTempToFixed, handleDischarge: handleDischarge, handleReleaseFastOccupancy: handleReleaseFastOccupancy,
+                getElapsedDuration: getElapsedDuration, user: user
+            })
+        );
+    };
+
+    window.App.BedMap = BedMap;
+  })();
+</script>

@@ -1,0 +1,388 @@
+<script>
+  (function() {
+    window.App = window.App || {};
+    window.App.UI = window.App.UI || {};
+
+    // ============================================================================
+    // TOAST SYSTEM - Notificações no canto da tela
+    // ============================================================================
+
+    const ToastContainer = ({ toasts }) => {
+      if (!toasts || toasts.length === 0) return null;
+
+      const toastStyles = {
+        success: 'bg-emerald-900 border-emerald-700 text-emerald-100',
+        error: 'bg-rose-900 border-rose-700 text-rose-100',
+        warning: 'bg-amber-900 border-amber-700 text-amber-100',
+        info: 'bg-blue-900 border-blue-700 text-blue-100',
+        loading: 'bg-slate-800 border-slate-700 text-slate-100'
+      };
+
+      const iconMap = {
+        success: '✓',
+        error: '✕',
+        warning: '⚠',
+        info: 'ℹ',
+        loading: '⦿'
+      };
+
+      return React.createElement('div', { className: 'fixed top-4 right-4 z-[9999] flex flex-col gap-2 pointer-events-none' },
+        toasts.map((toast) => React.createElement('div',
+          {
+            key: toast.id,
+            className: [
+              'px-4 py-3 rounded-lg border animate-[slideInRight_0.3s_ease-out] pointer-events-auto',
+              'font-medium text-sm flex items-center gap-3 shadow-lg',
+              toastStyles[toast.type] || toastStyles.info
+            ].join('\n                '),
+            role: 'alert'
+          },
+          React.createElement('span', { className: 'text-lg font-bold flex-shrink-0' }, iconMap[toast.type]),
+          React.createElement('span', { className: 'flex-1' }, toast.message),
+          toast.action && React.createElement('button',
+            {
+              onClick: toast.action.callback,
+              className: 'text-xs font-bold underline hover:opacity-80 transition-opacity ml-2'
+            },
+            toast.action.label
+          )
+        ))
+      );
+    };
+
+    // Durations padronizadas (ms)
+    const TOAST_DURATIONS = {
+      success: 3000,
+      error: 5000,
+      warning: 4000,
+      info: 3000,
+      loading: 0
+    };
+
+    window.App.UI.useToast = () => {
+      const { useState, useCallback } = React;
+      const [toasts, setToasts] = useState([]);
+
+      const show = useCallback((message, type = 'info', duration, action = null) => {
+        const finalDuration = (typeof duration === 'number') ? duration : (TOAST_DURATIONS[type] ?? 3000);
+        const id = Date.now() + Math.random();
+        const newToast = { id, message, type, action };
+        
+        setToasts((prev) => [...prev, newToast]);
+
+        if (finalDuration > 0) {
+          setTimeout(() => {
+            setToasts((prev) => prev.filter((t) => t.id !== id));
+          }, finalDuration);
+        }
+
+        return id;
+      }, []);
+
+      const remove = useCallback((id) => {
+        setToasts((prev) => prev.filter((t) => t.id !== id));
+      }, []);
+
+      return {
+        show,
+        success: (msg, duration) => show(msg, 'success', duration),
+        error: (msg, duration) => show(msg, 'error', duration),
+        warning: (msg, duration) => show(msg, 'warning', duration),
+        info: (msg, duration) => show(msg, 'info', duration),
+        loading: (msg) => show(msg, 'loading', 0), // Sem auto-fechar por padrão
+        remove,
+        toasts,
+        Toast: React.createElement(ToastContainer, { toasts })
+      };
+    };
+
+    // ============================================================================
+    // HELPER: Debounce para search/filter
+    // ============================================================================
+    window.App.UI.debounce = (func, wait) => {
+      let timeout;
+      return function executedFunction(...args) {
+        const later = () => {
+          clearTimeout(timeout);
+          func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+      };
+    };
+
+    // ============================================================================
+    // HELPER: Validators
+    // ============================================================================
+    window.App.UI.Validators = {
+      nonEmpty: (value, fieldName) => {
+        if (!value || String(value).trim() === '') {
+          throw new Error(`${fieldName} é obrigatório`);
+        }
+      },
+
+      isNumber: (value, fieldName) => {
+        if (isNaN(value) || value === '') {
+          throw new Error(`${fieldName} deve ser um número válido`);
+        }
+      },
+
+      isEmail: (value, fieldName = 'Email') => {
+        const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!regex.test(value)) {
+          throw new Error(`${fieldName} é inválido`);
+        }
+      },
+
+      validatePatient: (p) => {
+        if (!p) throw new Error('Dados do paciente não fornecidos');
+        window.App.UI.Validators.nonEmpty(p.name, 'Nome do paciente');
+        window.App.UI.Validators.nonEmpty(p.id, 'ID do paciente');
+        if (String(p.id).length < 3) throw new Error('ID deve ter ao menos 3 caracteres');
+        if (p.bed) window.App.UI.Validators.isNumber(p.bed, 'Número de leito');
+      },
+
+      validateTransfer: (t) => {
+        if (!t) throw new Error('Dados da transferência não fornecidos');
+        window.App.UI.Validators.nonEmpty(t.patient, 'Paciente');
+        window.App.UI.Validators.nonEmpty(t.origin, 'Leito de origem');
+        window.App.UI.Validators.nonEmpty(t.sector, 'Setor destino');
+      },
+
+      validateDischarge: (d) => {
+        if (!d) throw new Error('Dados da alta não fornecidos');
+        window.App.UI.Validators.nonEmpty(d.patientName, 'Nome do paciente');
+        window.App.UI.Validators.nonEmpty(d.date, 'Data de alta');
+        window.App.UI.Validators.nonEmpty(d.reason, 'Motivo da alta');
+      }
+    };
+
+    // ============================================================================
+    // HELPER: Error Handler
+    // ============================================================================
+    window.App.UI.ErrorHandler = {
+      parse: (error) => {
+        return window.App.ErrorHandler.parse(error);
+      },
+
+      isNetworkError: (error) => {
+        return window.App.ErrorHandler.isNetworkError(error);
+      },
+
+      isConcurrencyError: (error) => {
+        return window.App.ErrorHandler.isConcurrencyError(error);
+      },
+
+      isValidationError: (error) => {
+        return window.App.ErrorHandler.isValidationError(error);
+      }
+    };
+
+    // ==========================================================================
+    // COMPAT: API imperativa global `UI.Toast` (compat com código existente)
+    //  - Fornece: show/success/error/warning/info/loading/remove/toasts
+    //  - Renderiza ToastContainer via ReactDOM.createRoot em um container no body
+    // ==========================================================================
+    (function setupImperativeToast() {
+      try {
+        window.App.UI._toasts = window.App.UI._toasts || [];
+
+        const ensureRoot = () => {
+          if (window.App.UI._toastRoot) return window.App.UI._toastRoot;
+          const id = '__sysgestao_toast_root';
+          let container = document.getElementById(id);
+          if (!container) {
+            container = document.createElement('div');
+            container.id = id;
+            document.body.appendChild(container);
+          }
+          window.App.UI._toastRoot = ReactDOM.createRoot(container);
+          return window.App.UI._toastRoot;
+        };
+
+        const renderToasts = () => {
+          const root = ensureRoot();
+          root.render(React.createElement(ToastContainer, { toasts: window.App.UI._toasts }));
+        };
+
+        const addToast = (message, type = 'info', duration = 3000, action = null) => {
+          const id = Date.now() + Math.random();
+          const toast = { id, message, type, action };
+          window.App.UI._toasts.push(toast);
+          renderToasts();
+          if (duration > 0) {
+            setTimeout(() => {
+              window.App.UI._toasts = window.App.UI._toasts.filter((t) => t.id !== id);
+              renderToasts();
+            }, duration);
+          }
+          return id;
+        };
+
+        const removeToast = (id) => {
+          window.App.UI._toasts = window.App.UI._toasts.filter((t) => t.id !== id);
+          renderToasts();
+        };
+
+        // Expose global imperative API AND a compatible React component
+        // Create a bridge component so pages can use either <UI.Toast /> or UI.Toast.show(...)
+        const ToastBridge = function ToastBridge() {
+          const toasts = window.App.UI._toasts || [];
+          return React.createElement(ToastContainer, { toasts });
+        };
+
+        // Attach imperative methods onto the bridge function (functions are objects)
+        ToastBridge.show = (msg, type = 'info', duration = 3000, action = null) => addToast(msg, type, duration, action);
+        ToastBridge.success = (msg, duration = 3000) => addToast(msg, 'success', duration);
+        ToastBridge.error = (msg, duration = 5000) => addToast(msg, 'error', duration);
+        ToastBridge.warning = (msg, duration = 4000) => addToast(msg, 'warning', duration);
+        ToastBridge.info = (msg, duration = 3000) => addToast(msg, 'info', duration);
+        ToastBridge.loading = (msg) => addToast(msg, 'loading', 0);
+        ToastBridge.remove = removeToast;
+        Object.defineProperty(ToastBridge, 'toasts', { get: () => window.App.UI._toasts });
+
+        window.App.UI.Toast = ToastBridge;
+
+        // Initial render (empty)
+        renderToasts();
+      } catch (e) {
+        if (window.App && window.App.Logger) {
+          window.App.Logger.warn('Toast setup failed:', e);
+        } else {
+          window.App.Logger.warn('Toast setup: imperative API ready, but hook bridge failed (fallback: native confirm)');
+        }
+      }
+    })();
+
+    if (window.App && window.App.Logger) {
+      window.App.Logger.debug('✓ Toast System carregado');
+    }
+    
+    // ==========================================================================
+    // IMPERATIVE CONFIRM: substitui `confirm()` com modal DOM simples e Promise
+    // Uso: const ok = await window.App.UI.confirm('Texto?'); // true/false
+    // ==========================================================================
+    window.App.UI.confirm = (message, opts = {}) => {
+      return new Promise((resolve) => {
+        try {
+          const id = '__sysgestao_confirm';
+          // Evita múltiplos modais
+          if (document.getElementById(id)) {
+            resolve(confirm(message));
+            return;
+          }
+
+          const overlay = document.createElement('div');
+          overlay.id = id;
+          overlay.style.position = 'fixed';
+          overlay.style.inset = '0';
+          overlay.style.display = 'flex';
+          overlay.style.alignItems = 'center';
+          overlay.style.justifyContent = 'center';
+          overlay.style.background = 'rgba(0,0,0,0.45)';
+          overlay.style.zIndex = '100000';
+
+          const box = document.createElement('div');
+          box.style.background = '#0f1724';
+          box.style.color = 'white';
+          box.style.padding = '20px';
+          box.style.borderRadius = '12px';
+          box.style.maxWidth = '520px';
+          box.style.width = '90%';
+          box.style.boxShadow = '0 10px 30px rgba(0,0,0,0.6)';
+
+          const p = document.createElement('div');
+          p.style.marginBottom = '16px';
+          p.style.fontSize = '14px';
+          p.innerText = message || 'Confirmar?';
+
+          const btnWrap = document.createElement('div');
+          btnWrap.style.display = 'flex';
+          btnWrap.style.gap = '12px';
+          btnWrap.style.justifyContent = 'flex-end';
+
+          const btnCancel = document.createElement('button');
+          btnCancel.innerText = opts.cancelLabel || 'Cancelar';
+          btnCancel.style.padding = '8px 14px';
+          btnCancel.style.borderRadius = '8px';
+          btnCancel.style.border = 'none';
+          btnCancel.style.background = '#334155';
+          btnCancel.style.color = '#fff';
+
+          const btnOk = document.createElement('button');
+          btnOk.innerText = opts.okLabel || 'Confirmar';
+          btnOk.style.padding = '8px 14px';
+          btnOk.style.borderRadius = '8px';
+          btnOk.style.border = 'none';
+          btnOk.style.background = '#06b6d4';
+          btnOk.style.color = '#042029';
+
+          btnWrap.appendChild(btnCancel);
+          btnWrap.appendChild(btnOk);
+
+          box.appendChild(p);
+          box.appendChild(btnWrap);
+          overlay.appendChild(box);
+          document.body.appendChild(overlay);
+
+          const cleanup = (value) => {
+            try { document.body.removeChild(overlay); } catch(e){}
+            resolve(!!value);
+          };
+
+          btnCancel.addEventListener('click', () => cleanup(false));
+          btnOk.addEventListener('click', () => cleanup(true));
+
+          // keyboard handlers
+          const keyHandler = (ev) => {
+            if (ev.key === 'Escape') { cleanup(false); document.removeEventListener('keydown', keyHandler); }
+            if (ev.key === 'Enter') { cleanup(true); document.removeEventListener('keydown', keyHandler); }
+          };
+          document.addEventListener('keydown', keyHandler);
+        } catch (e) {
+          // Fallback para confirm padrão
+          resolve(confirm(message));
+        }
+      });
+    };
+
+    // Helper: confirma com modal e retorna boolean (async)
+    // Uso: const ok = await UI.confirmThen('Texto de confirmação');
+    window.App.UI.confirmThen = async (message, opts = {}) => {
+      try {
+        if (window.App && window.App.UI && typeof window.App.UI.confirm === 'function') {
+          return await window.App.UI.confirm(message, opts);
+        }
+      } catch (e) {
+        // ignore and fallback
+      }
+      return confirm(message);
+    };
+    // ============================================================================
+    // COMPONENTES DE LAYOUT E UI (Fase 2)
+    // ============================================================================
+    
+    window.App.UI.PageContainer = ({ children, className = '' }) => {
+      return React.createElement('div', { className: `nx-container ${className}` },
+        children
+      );
+    };
+
+    window.App.UI.PageHeader = ({ title, subtitle, rightContent, className = '' }) => {
+      return React.createElement(React.Fragment, null,
+        React.createElement('div', { className: `nx-header ${className}` },
+          React.createElement('div', null,
+            React.createElement('h1', { className: 'nx-header-title' }, title),
+            subtitle && React.createElement('p', { className: 'nx-header-subtitle' }, subtitle)
+          ),
+          rightContent && React.createElement('div', { className: 'flex items-center gap-2' },
+            rightContent
+          )
+        ),
+        React.createElement('div', { className: 'nx-header-divider' })
+      );
+    };
+
+    console.log("[UI.html] UI helpers initialized");
+  })();
+</script>

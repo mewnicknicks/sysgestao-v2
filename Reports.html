@@ -1,0 +1,102 @@
+
+<script>
+  (function() {
+    window.App = window.App || {};
+
+    var Reports = function() {
+        var ctx = window.App.Context.useAppContext();
+        var user = ctx.user;
+        var appData = ctx.appData;
+        var structure = ctx.structure;
+        var patientsList = ctx.patientsList;
+        var dischargeList = ctx.dischargeList;
+        var transferList = ctx.transferList;
+        var blockedBedsList = ctx.blockedBedsList;
+        var actions = ctx.actions;
+
+        var UI = window.App.UI || {};
+        var Utils = window.App.Utils || {};
+        var HospitalLogo = window.HospitalLogo;
+        var CensusView = window.App.CensusView || (function() { return React.createElement('div', { className: 'p-10 text-rose-500 font-mono' }, 'Erro: Componente CensusView n\u00e3o carregado.'); });
+        var RotationView = window.App.RotationView || (function() { return React.createElement('div', { className: 'p-10 text-rose-500 font-mono' }, 'Erro: Componente RotationView n\u00e3o carregado.'); });
+        var DocumentEditor = window.App.DocumentEditor;
+
+        // Hooks
+        var optimisticHook = window.App.Hooks.useOptimisticAction();
+        var isOptimistic = optimisticHook.isOptimistic;
+        var runOptimistic = optimisticHook.run;
+
+        // Estado Local
+        var activeTabState = React.useState('CENSUS');
+        var activeTab = activeTabState[0];
+        var setActiveTab = activeTabState[1];
+
+        var censusFilterState = React.useState('');
+        var censusFilter = censusFilterState[0];
+        var setCensusFilter = censusFilterState[1];
+
+        var handlePrint = function() {
+            setTimeout(function() { window.print(); }, 100);
+        };
+
+        var navTabs = [
+            { id: 'CENSUS', label: 'Censo & Ronda', icon: 'ph-clipboard-text' },
+            { id: 'MEMO', label: 'Comunicados', icon: 'ph-megaphone' },
+            { id: 'ROTATION', label: 'Rod\u00edzio', icon: 'ph-arrows-clockwise' }
+        ];
+
+        var filterOptions = [
+            { value: '', label: 'TODOS OS SETORES' },
+            { value: 'DAYS_30', label: 'INTERNADOS > 30 DIAS' },
+            { value: 'DAYS_45', label: 'INTERNADOS > 45 DIAS' }
+        ].concat((structure.sectors || []).map(function(s) { return { value: s.name, label: 'SETOR: ' + s.name }; }));
+
+        return React.createElement('div', { className: 'nx-container px-10 pt-5 pb-0 animate-fade-in flex flex-col h-full' },
+
+            React.createElement('div', { className: 'nx-header shrink-0 print-hidden' },
+                React.createElement('div', { className: 'nx-header-title-group' },
+                    React.createElement('h1', { className: 'nx-header-title' }, 'Central de Relat\u00f3rios'),
+                    React.createElement('p', { className: 'nx-header-subtitle' }, 'Documentos e An\u00e1lises')
+                )
+            ),
+            React.createElement('div', { className: 'nx-header-divider shrink-0 print-hidden' }),
+
+            React.createElement('div', { className: 'flex gap-8 mb-4 border-b border-blue-500/10 shrink-0 overflow-x-auto custom-scrollbar whitespace-nowrap print-hidden' },
+                navTabs.map(function(tab) {
+                    return React.createElement('button', {
+                        key: tab.id,
+                        onClick: function() { setActiveTab(tab.id); },
+                        className: 'pb-4 text-xs font-black uppercase tracking-[0.2em] flex items-center gap-2 transition-all relative ' + (activeTab === tab.id ? 'text-blue-900 dark:text-white' : 'text-blue-600/60 hover:text-blue-400')
+                    },
+                        React.createElement('i', { className: 'ph-bold ' + tab.icon + ' text-lg' }),
+                        ' ' + tab.label,
+                        activeTab === tab.id && React.createElement('div', { className: 'absolute bottom-0 left-0 w-full h-0.5 bg-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.8)]' })
+                    );
+                })
+            ),
+
+            React.createElement('div', { className: 'flex-1 min-h-0 relative h-full' },
+
+                // CENSO
+                activeTab === 'CENSUS' && React.createElement(CensusView, {
+                    censusFilter: censusFilter,
+                    setCensusFilter: setCensusFilter,
+                    filterOptions: filterOptions,
+                    handlePrint: handlePrint
+                }),
+
+                activeTab === 'MEMO' && (
+                    DocumentEditor
+                        ? React.createElement(DocumentEditor, { user: user })
+                        : React.createElement('div', { className: 'p-10 text-center text-blue-500/50' }, 'M\u00f3dulo de Editor carregando...')
+                ),
+
+                // ROTATION / ROD\u00cdZIO
+                activeTab === 'ROTATION' && React.createElement(RotationView, { handlePrint: handlePrint })
+            )
+        );
+    };
+
+    window.App.Reports = Reports;
+  })();
+</script>

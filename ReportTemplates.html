@@ -1,0 +1,294 @@
+
+<script>
+  (function() {
+    window.App = window.App || {};
+    
+    // Namespace dedicado para Templates de Texto
+    window.App.Templates = {
+        
+        /**
+         * Relatório: CENÁRIO GLOBAL (Dashboard)
+         * Usado em: GlobalScenario.html
+         */
+        globalScenario: (data, user) => {
+            if (!data || !data.stats) return "Carregando dados para gerar relatório...";
+            
+            // Helpers
+            const now = new Date();
+            const userName = (user && user.name) ? user.name.split(' ')[0].toUpperCase() : 'PLANTONISTA';
+            
+            // Helper de Barra de Progresso (10 blocos)
+            const getProgressBar = (pct) => {
+                const p = Math.min(100, Math.max(0, pct));
+                const filled = Math.round(p / 10);
+                const empty = 10 - filled;
+                return '▰'.repeat(filled) + '▱'.repeat(empty);
+            };
+
+            // Helper de Valores Seguros
+            const getStats = (id) => data.stats.classes[id] || { free: 0, occupied: 0, capacity: 0 };
+            
+            // --- HEADER ---
+            let text = `**CENÁRIO PARA HOJE**\n`;
+            text += `${now.toLocaleDateString('pt-BR')}\n`;
+            text += `Plantonista: ${userName}\n\n`;
+
+            // --- OCUPAÇÃO GERAL ---
+            const totalCap = data.stats.totals.capacity;
+            const totalOcc = data.stats.totals.occupied;
+            const totalFree = totalCap - totalOcc;
+            
+            text += `📊 **OCUPAÇÃO GERAL:**\n`;
+            text += `${data.globalOcc}% ${getProgressBar(data.globalOcc)}\n`;
+            text += `(${totalFree} Livres | ${totalCap} Total)\n\n`;
+
+            // --- OCUPAÇÃO POR UNIDADE (UI + CETIPE) ---
+            text += `🛌 **OCUPAÇÃO POR UNIDADE**\n`;
+            text += `_(Livres | Ocupados)_\n`;
+            
+            const listUnits = [
+                { id: 'UI', label: 'UI GERAL' },
+                { id: 'UI_EST', label: 'UI EST' },
+                { id: 'PED', label: 'PEDIATRIA' },
+                { id: 'CETIPE', label: 'CETIPE' }
+            ];
+
+            listUnits.forEach(u => {
+                const s = getStats(u.id);
+                // Formato: • UI GERAL: **xx | xx**
+                text += `• ${u.label}: **${s.free} | ${s.occupied}**\n`;
+            });
+            text += `\n`;
+
+            // --- OCUPAÇÃO CTI (DETALHADO) ---
+            // Calcula % Agregado de CTI (Geral + Estratégico, sem Cetipe pois já foi listado acima)
+            const ctiGeral = getStats('CTI');
+            const ctiEst = getStats('CTI_EST');
+            const ctiTotalCap = ctiGeral.capacity + ctiEst.capacity;
+            const ctiTotalOcc = ctiGeral.occupied + ctiEst.occupied;
+            const ctiPct = ctiTotalCap > 0 ? Math.round((ctiTotalOcc / ctiTotalCap) * 100) : 0;
+
+            text += `📊 **OCUPAÇÃO CTI:**\n`;
+            text += `${ctiPct}% ${getProgressBar(ctiPct)}\n`;
+
+            // Lista individual dos setores CTI (filtrando Cetipe e Pediatria)
+            const ctiSectors = (data.charts.ctiSectorData || []).filter(s => {
+                const name = (s.name || '').toUpperCase();
+                return !name.includes('CETIPE') && !name.includes('PED');
+            });
+
+            if (ctiSectors.length > 0) {
+                ctiSectors.forEach(s => {
+                    text += `• ${s.name}: ${s.free} livres\n`;
+                });
+            } else {
+                text += `• Sem setores CTI cadastrados\n`;
+            }
+            text += `\n`;
+
+            // --- ADMISSÕES PREVISTAS ---
+            const inflow = data.inflow || {};
+            text += `📥 **ADMISSÕES PREVISTAS**\n`;
+            text += `• Bloco: **${inflow.surgical?.ui || 0} (UI) | ${inflow.surgical?.cti || 0} (CTI)**\n`;
+            text += `• HDM: **${inflow.hdm?.ui || 0} (UI) | ${inflow.hdm?.cti || 0} (CTI)**\n\n`;
+
+            // --- FLUXO E MOVIMENTAÇÃO ---
+            const outflows = data.outflows || {};
+            text += `🚀 **FLUXO E MOVIMENTAÇÃO**\n`;
+            text += `• Fila P.A.: **${inflow.pa?.count || 0}**\n`;
+            text += `• Altas: **${outflows.discharges || 0}**\n`;
+            text += `• Óbitos: **${outflows.deaths || 0}**\n`;
+            text += `• Transf. Externas: **${inflow.transfer?.count || 0}**\n\n`;
+
+            // --- GIRO DE LEITOS ---
+            const gap = outflows.turnoverGap || 0;
+            const gapSign = gap > 0 ? '+' : ''; // Se gap for negativo o sinal já vem no número
+            const gapLabel = gap < 0 ? '(Deficit)' : '(Positivo)';
+            
+            text += `📈 GIRO DE LEITOS:\n`;
+            text += `**${gapSign}${gap}** ${gapLabel}`;
+            
+            return text;
+        },
+
+        /**
+         * Relatório: PASSAGEM DE PLANTÃO
+         * Usado em: ShiftHandover.html
+         */
+        shiftHandover: (data, user, admissions, obsList) => {
+            const now = new Date();
+            const todayISO = now.toISOString().split('T')[0];
+            const hour = now.getHours();
+            const period = (hour >= 7 && hour < 19) ? 'DIURNO' : 'NOTURNO';
+            const userName = (user && user.name) ? user.name.split(' ')[0].toUpperCase() : 'PLANTONISTA';
+
+            // Helper Sentence Case
+            const toSentence = (str) => {
+                if (!str) return '';
+                const s = String(str).trim();
+                return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+            };
+
+            // Helper de Barra de Progresso
+            const getProgressBar = (pct) => {
+                const p = Math.min(100, Math.max(0, pct || 0));
+                const filled = Math.round(p / 10);
+                const empty = 10 - filled;
+                return '▰'.repeat(filled) + '▱'.repeat(empty);
+            };
+
+            const getStats = (id) => (data.stats && data.stats.classes[id]) || { free: 0, occupied: 0, capacity: 0 };
+
+            let text = `📋 PASSAGEM DE PLANTÃO\n     GESTÃO DE LEITOS\n\n`;
+            text += `📅 ${now.toLocaleDateString('pt-BR')} • ${period}\n`;
+            text += `👨‍⚕️ Responsável: ${userName}\n`;
+            text += `──────────────────────\n\n`;
+
+            if (data.stats) {
+                // --- OCUPAÇÃO GERAL ---
+                const totalCap = data.stats.totals.capacity;
+                const totalOcc = data.stats.totals.occupied;
+                const totalFree = totalCap - totalOcc;
+                const globalOcc = data.globalOcc || 0;
+                
+                text += `📊 **OCUPAÇÃO GERAL:**\n`;
+                text += `${globalOcc}% ${getProgressBar(globalOcc)}\n`;
+                text += `(${totalFree} Livres | ${totalCap} Total)\n\n`;
+
+                // --- OCUPAÇÃO POR UNIDADE ---
+                text += `🛌 **OCUPAÇÃO POR UNIDADE**\n`;
+                text += `(Livres | Ocupados)\n`;
+                
+                const listUnits = [
+                    { id: 'UI', label: 'UI GERAL' },
+                    { id: 'UI_EST', label: 'UI EST' }, // Verifica se existe nas classes
+                    { id: 'PED', label: 'PEDIATRIA' },
+                    { id: 'CETIPE', label: 'CETIPE' }
+                ];
+
+                listUnits.forEach(u => {
+                    const s = getStats(u.id);
+                    // Usa o label fixo ou o do stats se existir
+                    const label = u.label; 
+                    text += `${label}: **${s.free} | ${s.occupied}**\n`;
+                });
+                text += `\n`;
+
+                // --- OCUPAÇÃO CTI ---
+                const ctiGeral = getStats('CTI');
+                const ctiEst = getStats('CTI_EST');
+                const ctiTotalCap = ctiGeral.capacity + ctiEst.capacity;
+                const ctiTotalOcc = ctiGeral.occupied + ctiEst.occupied;
+                const ctiPct = ctiTotalCap > 0 ? Math.round((ctiTotalOcc / ctiTotalCap) * 100) : 0;
+
+                text += `📊 **OCUPAÇÃO CTI:**\n`;
+                text += `${ctiPct}% ${getProgressBar(ctiPct)}\n`;
+
+                if (data.charts && data.charts.ctiSectorData) {
+                    const ctiSectors = data.charts.ctiSectorData.filter(s => {
+                        const name = (s.name || '').toUpperCase();
+                        return !name.includes('CETIPE') && !name.includes('PED');
+                    });
+                    if (ctiSectors.length > 0) {
+                        ctiSectors.forEach(s => {
+                            text += `${s.name}: ${s.free} livres\n`;
+                        });
+                    } else {
+                        text += `Sem setores cadastrados\n`;
+                    }
+                }
+                text += `\n`;
+
+                // --- GIRO DE LEITOS ---
+                const gap = data.outflows ? (data.outflows.turnoverGap || 0) : 0;
+                const gapSign = gap > 0 ? '+' : '';
+                const gapLabel = gap < 0 ? '(Deficit)' : '(Positivo)';
+                text += `📈 GIRO DE LEITOS:\n`;
+                text += `**${gapSign}${gap}** ${gapLabel}\n`;
+                text += `________________________________________\n\n`;
+            }
+
+            // --- 1. ÓBITOS ---
+            const deaths = (data.dischargeList || []).filter(d => d.reason === window.App.Constants.DISCHARGE_STATUS.OBITO && (d.date || '').startsWith(todayISO));
+            text += `⚫ ÓBITOS:\n`;
+            if (deaths.length > 0) {
+                text += deaths.map(d => `   ▪️ ${toSentence(d.patientName)}`).join('\n') + `\n\n`;
+            } else {
+                text += `   Sem intercorrências\n\n`;
+            }
+
+            // --- 2. BLOQUEIOS & RESERVAS ---
+            const blocks = [];
+            const reserves = [];
+            (data.blockedBedsList || []).forEach(b => {
+                const r = (b.reason || '').toUpperCase();
+                // Filtra HIGIENIZAÇÃO (Correção solicitada)
+                if (r.includes('HIGIEN') || r.includes('LIMPEZA')) return;
+
+                if (r.includes(window.App.Constants.BED_STATUS.RESERVED)) reserves.push(b);
+                else blocks.push(b);
+            });
+
+            text += `🚫 BLOQUEIOS:\n`;
+            if (blocks.length > 0) {
+                text += blocks.map(b => `   ▪️ Leito ${b.bed}: ${toSentence(b.reason)}`).join('\n') + `\n\n`;
+            } else {
+                text += `   Sem bloqueios\n\n`;
+            }
+
+            text += `🚫 RESERVAS:\n`;
+            if (reserves.length > 0) {
+                text += reserves.map(b => `   ▪️ Leito ${b.bed}: ${toSentence(b.reason)}`).join('\n') + `\n\n`;
+            } else {
+                text += `   Sem reservas\n\n`;
+            }
+
+            // --- 3. TRANSFERÊNCIAS ENTRADA ---
+            const incoming = (data.transferList || []).filter(t => t.status === window.App.Constants.TRANSFER_STATUS.ACCEPTED && t.flow === window.App.Constants.FLOW_TYPES.ENTRY && !t.arrived);
+            text += `✅ TRANSF. ENTRADA (ACEITAS):\n`;
+            if (incoming.length > 0) {
+                text += incoming.map(t => `   ▪️ ${toSentence(t.patient)} (${toSentence(t.insurance)}) ➡️ ${toSentence(t.sector || 'A definir')}`).join('\n') + `\n\n`;
+            } else {
+                text += `   Nenhuma registrada\n\n`;
+            }
+
+            // --- 4. TRANSFERÊNCIAS SAÍDA ---
+            const outgoing = (data.transferList || []).filter(t => t.status === window.App.Constants.TRANSFER_STATUS.WAITING && t.flow === window.App.Constants.FLOW_TYPES.EXIT);
+            text += `🚑 TRANSF. SAÍDA (AGUARDANDO):\n`;
+            if (outgoing.length > 0) {
+                text += outgoing.map(t => `   ▪️ ${toSentence(t.patient)} (${toSentence(t.insurance)}) ➡️ ${toSentence(t.sector || 'Externo')}`).join('\n') + `\n\n`;
+            } else {
+                text += `   Nenhuma registrada\n\n`;
+            }
+
+            // --- 5. FILA P.A. ---
+            text += `⏳ FILA P.A.:\n`;
+            if (data.paList && data.paList.length > 0) {
+                text += data.paList.map(p => `   ▪️ ${toSentence(p.patient || p.name)} (${toSentence(p.insurance || 'Particular')}) ➡️ ${toSentence(p.sector || 'A definir')}`).join('\n') + `\n\n`;
+            } else {
+                text += `   Fila zerada\n\n`;
+            }
+
+            // --- 6. ADMISSÕES PREVISTAS (MANUAL) ---
+            text += `🎯 ADMISSÕES PREVISTAS:\n`;
+            if (admissions && admissions.length > 0) {
+                text += admissions.map(adm => `   ▪️ ${toSentence(adm.name)} (${toSentence(adm.convention)}) - ${adm.bed || 'S/L'}`).join('\n') + `\n`;
+            } else {
+                text += `   Sem previsão\n`;
+            }
+
+            text += `________________________________________\n\n`;
+
+            // --- 7. PENDÊNCIAS ---
+            text += `⚠️ PENDÊNCIAS GERAIS:\n`;
+            if (obsList && obsList.length > 0) {
+                text += obsList.map(obs => `   ▪️ ${toSentence(obs.text)}`).join('\n');
+            } else {
+                text += `   Sem pendências`;
+            }
+
+            return text;
+        }
+    };
+  })();
+</script>

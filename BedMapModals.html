@@ -1,0 +1,193 @@
+
+<script>
+  (function() {
+    window.App = window.App || {};
+
+    var BedMapModals = function(props) {
+        var actionMenu = props.actionMenu;
+        var setActionMenu = props.setActionMenu;
+        var blockModal = props.blockModal;
+        var setBlockModal = props.setBlockModal;
+        var handleBlockConfirm = props.handleBlockConfirm;
+        var reservationModal = props.reservationModal;
+        var setReservationModal = props.setReservationModal;
+        var handleManualReserve = props.handleManualReserve;
+        var transferModal = props.transferModal;
+        var setTransferModal = props.setTransferModal;
+        var handleTransferConfirm = props.handleTransferConfirm;
+        var targetBed = props.targetBed;
+        var setTargetBed = props.setTargetBed;
+        var quickReg = props.quickReg;
+        var setQuickReg = props.setQuickReg;
+        var quickRegData = props.quickRegData;
+        var setQuickRegData = props.setQuickRegData;
+        var handleQuickSave = props.handleQuickSave;
+        var structure = props.structure;
+        var patientsList = props.patientsList;
+        var blockedBedsList = props.blockedBedsList;
+        var handleOccupyInstant = props.handleOccupyInstant;
+        var handleSetCleaning = props.handleSetCleaning;
+        var handleFinishCleaning = props.handleFinishCleaning;
+        var handleUnblock = props.handleUnblock;
+        var handleAdmitFromReservation = props.handleAdmitFromReservation;
+        var handleConvertTempToFixed = props.handleConvertTempToFixed;
+        var handleDischarge = props.handleDischarge;
+        var handleReleaseFastOccupancy = props.handleReleaseFastOccupancy;
+        var getElapsedDuration = props.getElapsedDuration;
+        var user = props.user;
+
+        var UI = window.App.UI || {};
+        var Utils = window.App.Utils || {};
+        var STATUS_CONFIG = window.App.BedMapComponents.STATUS_CONFIG;
+        var INSURANCE_OPTIONS = window.App.INSURANCE_OPTIONS || [];
+
+        return React.createElement(React.Fragment, null,
+            // MODAL DE AÇÕES
+            React.createElement(UI.Modal, { isOpen: !!actionMenu, onClose: function() { setActionMenu(null); }, size: 'normal', className: 'sm:max-w-md' },
+                actionMenu && React.createElement(React.Fragment, null,
+                    React.createElement('div', { className: 'p-6 border-b border-white/5 bg-[#001d4a]/40 flex justify-between items-center' },
+                        React.createElement('div', { className: 'flex items-center gap-4' },
+                            React.createElement('div', { className: 'text-3xl font-black text-white bg-slate-800 w-16 h-16 rounded-2xl flex items-center justify-center shadow-lg border border-slate-700' }, actionMenu.bed.number),
+                            React.createElement('div', null,
+                                React.createElement('h3', { className: 'text-xl font-black text-white uppercase tracking-tight leading-none mb-1' }, actionMenu.sectorName),
+                                React.createElement('p', { className: 'text-[10px] font-black uppercase tracking-[0.2em] text-cyan-400' }, STATUS_CONFIG[actionMenu.bed.status].label)
+                            )
+                        ),
+                        React.createElement('button', { onClick: function() { setActionMenu(null); }, className: 'w-10 h-10 bg-slate-800/50 rounded-full text-slate-400 hover:text-white transition-colors flex items-center justify-center' },
+                            React.createElement('i', { className: 'ph-bold ph-x text-xl' })
+                        )
+                    ),
+                    React.createElement('div', { className: 'p-6' },
+                        actionMenu.bed.characteristics && React.createElement('div', { className: 'mb-4 p-3 bg-slate-900/50 rounded-xl border border-slate-800 flex items-center gap-2' },
+                            React.createElement('i', { className: 'ph-fill ph-info text-cyan-500' }),
+                            React.createElement('span', { className: 'text-[10px] font-bold text-slate-300 uppercase' }, actionMenu.bed.characteristics)
+                        ),
+
+                        actionMenu.bed.status === 'OCCUPIED' && actionMenu.bed.data && React.createElement('div', { className: 'mb-6 p-4 bg-slate-950/30 rounded-2xl border border-white/5' },
+                            React.createElement('h4', { className: 'text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1' }, 'PACIENTE'),
+                            React.createElement('p', { className: 'text-sm font-black text-white uppercase leading-tight mb-2' }, actionMenu.bed.data.name),
+                            React.createElement('div', { className: 'flex gap-2' },
+                                React.createElement('span', { className: 'text-[9px] font-black text-cyan-400 bg-cyan-950/30 px-2 py-1 rounded border border-cyan-500/20 uppercase tracking-wider' }, actionMenu.bed.data.insurance)
+                            )
+                        ),
+                        React.createElement('div', { className: 'grid grid-cols-2 gap-3' },
+                            actionMenu.bed.status === 'AVAILABLE' && React.createElement(React.Fragment, null,
+                                React.createElement('button', { onClick: function() { handleOccupyInstant(actionMenu.bed, actionMenu.sectorName); }, className: 'group relative flex flex-col items-center justify-center p-4 rounded-xl border border-emerald-500/20 bg-emerald-950/20 hover:bg-emerald-600 hover:border-emerald-500 transition-all duration-300' },
+                                    React.createElement('i', { className: 'ph-bold ph-user-plus text-2xl text-emerald-500 group-hover:text-white mb-2 transition-colors' }),
+                                    React.createElement('span', { className: 'text-[10px] font-black text-emerald-400 group-hover:text-white uppercase tracking-widest' }, 'Ocupar Agora')
+                                ),
+                                React.createElement('button', { onClick: function() { setQuickReg({show:true, bed: actionMenu.bed.number, sector: actionMenu.sectorName}); }, className: 'group relative flex flex-col items-center justify-center p-4 rounded-xl border border-cyan-500/20 bg-cyan-950/20 hover:bg-cyan-600 hover:border-cyan-500 transition-all duration-300' },
+                                    React.createElement('i', { className: 'ph-bold ph-pencil-simple text-2xl text-cyan-500 group-hover:text-white mb-2 transition-colors' }),
+                                    React.createElement('span', { className: 'text-[10px] font-black text-cyan-400 group-hover:text-white uppercase tracking-widest' }, 'Internar')
+                                ),
+                                React.createElement('button', { onClick: function() { setReservationModal({show:true, bed: actionMenu.bed.number}); setActionMenu(null); }, className: 'group relative flex flex-col items-center justify-center p-4 rounded-xl border border-amber-500/20 bg-amber-950/20 hover:bg-amber-600 hover:border-amber-500 transition-all duration-300' },
+                                    React.createElement('i', { className: 'ph-bold ph-bookmark-simple text-2xl text-amber-500 group-hover:text-white mb-2 transition-colors' }),
+                                    React.createElement('span', { className: 'text-[10px] font-black text-amber-400 group-hover:text-white uppercase tracking-widest' }, 'Reservar')
+                                ),
+                                React.createElement('button', { onClick: function() { handleSetCleaning(actionMenu.bed); }, className: 'group relative flex flex-col items-center justify-center p-4 rounded-xl border border-purple-500/20 bg-purple-950/20 hover:bg-purple-600 hover:border-purple-500 transition-all duration-300' },
+                                    React.createElement('i', { className: 'ph-bold ph-broom text-2xl text-purple-500 group-hover:text-white mb-2 transition-colors' }),
+                                    React.createElement('span', { className: 'text-[10px] font-black text-purple-400 group-hover:text-white uppercase tracking-widest' }, 'Higiene')
+                                ),
+                                React.createElement('div', { className: 'col-span-2' },
+                                    React.createElement('button', { onClick: function() { setBlockModal({show:true, bed: actionMenu.bed.number, reason:''}); }, className: 'w-full flex items-center justify-center gap-2 p-3 rounded-xl border border-slate-700 bg-slate-900/50 hover:bg-slate-800 text-slate-400 hover:text-white transition-all text-[10px] font-bold uppercase tracking-widest' },
+                                        React.createElement('i', { className: 'ph-bold ph-prohibit text-lg' }), ' Bloquear / Manutenção'
+                                    )
+                                )
+                            ),
+                            actionMenu.bed.status === 'OCCUPIED' && React.createElement(React.Fragment, null,
+                                (actionMenu.bed.data.name.includes('OCUPADO') || actionMenu.bed.data.attendance === 'MANUAL') ? (
+                                    React.createElement(React.Fragment, null,
+                                        React.createElement('button', { onClick: function() { handleConvertTempToFixed(actionMenu.bed.data); }, className: 'col-span-2 group relative flex flex-col items-center justify-center p-4 rounded-xl border border-cyan-500/20 bg-cyan-950/20 hover:bg-cyan-600 hover:border-cyan-500 transition-all duration-300' },
+                                            React.createElement('i', { className: 'ph-bold ph-user-switch text-3xl text-cyan-500 group-hover:text-white mb-2 transition-colors' }),
+                                            React.createElement('span', { className: 'text-xs font-black text-cyan-400 group-hover:text-white uppercase tracking-widest' }, 'Efetivar Internação')
+                                        ),
+                                        React.createElement('button', { onClick: function() { handleReleaseFastOccupancy(actionMenu.bed.data); }, className: 'col-span-2 group relative flex flex-row items-center justify-center gap-3 p-3 rounded-xl border border-rose-500/20 bg-rose-950/20 hover:bg-rose-600 hover:border-rose-500 transition-all duration-300' },
+                                            React.createElement('i', { className: 'ph-bold ph-x text-lg text-rose-500 group-hover:text-white transition-colors' }),
+                                            React.createElement('span', { className: 'text-[10px] font-black text-rose-400 group-hover:text-white uppercase tracking-widest' }, 'Cancelar Ocupação')
+                                        )
+                                    )
+                                ) : (
+                                    React.createElement(React.Fragment, null,
+                                        React.createElement('button', { onClick: function() { setTransferModal({show:true, patient: actionMenu.bed.data, currentBed: actionMenu.bed.number}); }, className: 'group relative flex flex-col items-center justify-center p-4 rounded-xl border border-cyan-500/20 bg-cyan-950/20 hover:bg-cyan-600 hover:border-cyan-500 transition-all duration-300' },
+                                            React.createElement('i', { className: 'ph-bold ph-arrows-left-right text-2xl text-cyan-500 group-hover:text-white mb-2 transition-colors' }),
+                                            React.createElement('span', { className: 'text-[10px] font-black text-cyan-400 group-hover:text-white uppercase tracking-widest' }, 'Transferir')
+                                        ),
+                                        React.createElement('button', { onClick: function() { handleDischarge(actionMenu.bed.data, actionMenu.bed); }, className: 'group relative flex flex-col items-center justify-center p-4 rounded-xl border border-rose-500/20 bg-rose-950/20 hover:bg-rose-600 hover:border-rose-500 transition-all duration-300' },
+                                            React.createElement('i', { className: 'ph-bold ph-sign-out text-2xl text-rose-500 group-hover:text-white mb-2 transition-colors' }),
+                                            React.createElement('span', { className: 'text-[10px] font-black text-rose-400 group-hover:text-white uppercase tracking-widest' }, 'Alta / Liberar')
+                                        )
+                                    )
+                                )
+                            ),
+                            (actionMenu.bed.status === 'CLEANING' || actionMenu.bed.status === 'MAINTENANCE') && React.createElement('div', { className: 'col-span-2' },
+                                React.createElement('p', { className: 'mb-4 text-center text-[10px] font-black uppercase p-2 rounded border flex items-center justify-center gap-2 ' + (actionMenu.bed.status === 'CLEANING' ? 'bg-purple-950/30 text-purple-400 border-purple-500/20' : 'bg-slate-900/50 text-slate-400 border-slate-700') },
+                                    React.createElement('i', { className: 'ph-fill ph-timer' }),
+                                    ' ',
+                                    actionMenu.bed.status === 'MAINTENANCE' ? 'Bloqueado há' : 'Em Higienização há', ' ', getElapsedDuration(actionMenu.bed.data.date) || "--"
+                                ),
+                                actionMenu.bed.status === 'MAINTENANCE' && React.createElement('p', { className: 'mb-4 text-center text-[10px] text-rose-400 font-bold uppercase bg-rose-950/30 p-2 rounded border border-rose-500/20' }, actionMenu.bed.data.reason),
+                                React.createElement('button', { onClick: function() { actionMenu.bed.status === 'CLEANING' ? handleFinishCleaning(actionMenu.bed) : handleUnblock(actionMenu.bed); }, className: 'w-full py-4 rounded-xl bg-emerald-600 text-white shadow-lg font-black uppercase text-xs flex items-center justify-center gap-3 hover:bg-emerald-500 transition-all' },
+                                    React.createElement('i', { className: 'ph-bold ' + (actionMenu.bed.status === 'CLEANING' ? 'ph-check-circle' : 'ph-wrench') + ' text-xl' }),
+                                    ' ',
+                                    actionMenu.bed.status === 'CLEANING' ? 'Liberar Leito' : 'Desbloquear'
+                                )
+                            ),
+                            actionMenu.bed.status === 'RESERVED' && React.createElement('div', { className: 'col-span-2 text-center' },
+                                React.createElement('div', { className: 'p-4 mb-4 bg-amber-950/20 rounded-xl border border-amber-500/20' },
+                                    React.createElement('span', { className: 'text-amber-500 font-bold text-[10px] uppercase block mb-1' }, 'Reservado para:'),
+                                    React.createElement('span', { className: 'text-white font-black uppercase text-xs' }, actionMenu.bed.data.patientName)
+                                ),
+                                React.createElement('div', { className: 'grid grid-cols-2 gap-3' },
+                                    React.createElement('button', { onClick: function() { handleUnblock(actionMenu.bed); }, className: 'flex flex-col items-center justify-center p-3 rounded-xl border border-rose-500/30 bg-rose-900/30 text-rose-400 hover:bg-rose-600 hover:text-white transition-all' },
+                                        React.createElement('i', { className: 'ph-bold ph-x text-2xl mb-1' }),
+                                        React.createElement('span', { className: 'text-[10px] font-black uppercase' }, 'Cancelar')
+                                    ),
+                                    React.createElement('button', { onClick: function() { handleAdmitFromReservation(actionMenu.bed, actionMenu.bed.data.patientName); }, className: 'flex flex-col items-center justify-center p-3 rounded-xl border border-emerald-500/30 bg-emerald-900/30 text-emerald-400 hover:bg-emerald-600 hover:text-white transition-all' },
+                                        React.createElement('i', { className: 'ph-bold ph-user-plus text-2xl mb-1' }),
+                                        React.createElement('span', { className: 'text-[10px] font-black uppercase' }, 'Internar')
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+            ),
+
+            React.createElement(UI.Modal, { isOpen: blockModal.show, onClose: function() { setBlockModal({show:false}); }, title: 'Bloquear Leito' },
+                React.createElement('form', { className: 'p-6', onSubmit: function(e) { e.preventDefault(); handleBlockConfirm(); } },
+                    React.createElement(UI.Input, { label: 'Motivo do Bloqueio', value: blockModal.reason, onChange: function(e) { setBlockModal(Object.assign({}, blockModal, { reason: e.target.value.toUpperCase() })); }, required: true, autoFocus: true }),
+                    React.createElement('button', { type: 'submit', disabled: !blockModal.reason, className: 'btn-action-confirm w-full mt-6 bg-rose-600 hover:bg-rose-500 border-rose-500 shadow-rose-500/30' }, 'Confirmar Bloqueio')
+                )
+            ),
+
+            React.createElement(UI.Modal, { isOpen: reservationModal.show, onClose: function() { setReservationModal({show:false}); }, title: 'Reservar Leito' },
+                React.createElement('form', { className: 'p-6', onSubmit: handleManualReserve },
+                    React.createElement(UI.Input, { label: 'Nome do Paciente', value: reservationModal.patientName, onChange: function(e) { setReservationModal(Object.assign({}, reservationModal, { patientName: e.target.value.toUpperCase() })); }, required: true, autoFocus: true }),
+                    React.createElement('button', { type: 'submit', disabled: !reservationModal.patientName, className: 'btn-action-confirm w-full mt-6 bg-amber-600 hover:bg-amber-500 border-amber-500 shadow-amber-500/30' }, 'Confirmar Reserva')
+                )
+            ),
+
+            React.createElement(UI.Modal, { isOpen: transferModal.show, onClose: function() { setTransferModal({show:false}); }, title: 'Transferência Interna' },
+                React.createElement('form', { className: 'p-6 text-center', onSubmit: function(e) { e.preventDefault(); handleTransferConfirm(); } },
+                    React.createElement('p', { className: 'text-xs font-bold text-slate-500 mb-6 uppercase tracking-widest' }, transferModal.patient && transferModal.patient.name),
+                    React.createElement(UI.BedSelector, { label: 'Leito de Destino', value: targetBed, onChange: function(e) { setTargetBed(e.target.value); }, sector: null, structure: structure, patientsList: patientsList, blockedBedsList: blockedBedsList, required: true }),
+                    React.createElement('button', { type: 'submit', disabled: !targetBed, className: 'btn-action-confirm w-full mt-6 bg-cyan-600 hover:bg-cyan-500 border-cyan-500 shadow-cyan-500/30' }, 'Confirmar Troca')
+                )
+            ),
+
+            React.createElement(UI.Modal, { isOpen: quickReg.show, onClose: function() { setQuickReg({ show: false, bed: '', sector: '', patientIdToEdit: null }); }, title: quickReg.patientIdToEdit ? 'Editar Paciente' : 'Internação Rápida' },
+                React.createElement('div', { className: 'p-6' },
+                    React.createElement('form', { onSubmit: handleQuickSave, autoComplete: 'off', onKeyDown: Utils.handleEnterNavigation },
+                        React.createElement(UI.Input, { label: 'Nome Completo', value: quickRegData.name, onChange: function(e) { setQuickRegData(Object.assign({}, quickRegData, { name: e.target.value.toUpperCase() })); }, required: true, autoFocus: true }),
+                        React.createElement(UI.Input, { label: 'Nº Atendimento', value: quickRegData.attendance, onChange: function(e) { setQuickRegData(Object.assign({}, quickRegData, { attendance: e.target.value.toUpperCase() })); } }),
+                        React.createElement(UI.SearchableSelect, { label: 'Convênio', value: quickRegData.insurance, onChange: function(e) { setQuickRegData(Object.assign({}, quickRegData, { insurance: e.target.value })); }, options: INSURANCE_OPTIONS, required: true }),
+                        React.createElement('button', { type: 'submit', className: 'btn-action-confirm w-full mt-6 bg-emerald-600 hover:bg-emerald-500 border-emerald-500 shadow-emerald-500/30' }, 'Salvar Dados')
+                    )
+                )
+            )
+        );
+    };
+
+    window.App.BedMapModals = BedMapModals;
+  })();
+</script>

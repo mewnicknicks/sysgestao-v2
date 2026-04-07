@@ -1,0 +1,157 @@
+<!-- LAZY LOADING WRAPPER FOR VIEWS (Performance Optimization)
+  
+  This module provides dynamic import capability for large views,
+  reducing initial bundle size and improving Time To Interactive (TTI).
+  
+  Usage:
+    const LazyView = window.App.LazyView;
+    const GlobalScenarioLazy = LazyView.lazy('GlobalScenario');
+    // Or use preload hint: LazyView.preload(['Transfer', 'BedMap']);
+-->
+
+<script type="application/javascript">
+(function() {
+  window.App = window.App || {};
+  'use strict';
+
+  const LazyView = {
+    cache: {},
+    loading: {},
+    preloadList: [],
+
+    /**
+     * Dynamically import and cache a view component
+     * @param {string} viewName - Name of the view (e.g., 'GlobalScenario')
+     * @param {boolean} force - Force reload even if cached
+     * @returns {Promise<any>} Resolved module/component
+     */
+    lazy: async function(viewName, force = false) {
+      try {
+        // Return from cache if available and not forced
+        if (this.cache[viewName] && !force) {
+          return this.cache[viewName];
+        }
+
+        // Return pending promise if already loading
+        if (this.loading[viewName]) {
+          return this.loading[viewName];
+        }
+
+        // Create fetch promise
+        const fetchPromise = this._loadView(viewName);
+        this.loading[viewName] = fetchPromise;
+
+        const result = await fetchPromise;
+        this.cache[viewName] = result;
+        delete this.loading[viewName];
+
+        window.App?.Logger?.debug(`[LazyView] Loaded: ${viewName}`);
+        return result;
+      } catch (error) {
+        delete this.loading[viewName];
+        const msg = `Failed to lazy load view: ${viewName}`;
+        window.App?.Logger?.error(msg, { error: error.message });
+        throw new Error(msg);
+      }
+    },
+
+    /**
+     * Preload views in background (idle time)
+     * @param {Array<string>} viewNames - Array of view names to preload
+     */
+    preload: function(viewNames) {
+      if (!Array.isArray(viewNames)) return;
+
+      // Use requestIdleCallback if available, fallback to setTimeout
+      const scheduler = window.requestIdleCallback || (cb => setTimeout(cb, 2000));
+
+      scheduler(() => {
+        viewNames.forEach(name => {
+          if (!this.cache[name] && !this.loading[name]) {
+            this._loadView(name)
+              .then(result => {
+                this.cache[name] = result;
+                window.App?.Logger?.debug(`[LazyView] Preloaded: ${name}`);
+              })
+              .catch(error => {
+                window.App?.Logger?.warn(`[LazyView] Preload failed: ${name}`, { error: error.message });
+              });
+          }
+        });
+      });
+    },
+
+    /**
+     * Internal: Fetch and evaluate view code
+     * @private
+     */
+    _loadView: async function(viewName) {
+      // Try multiple sources: local variable (from App namespace) or fetch
+      
+      // First check if already available in window.App
+      if (window.App && window.App[viewName]) {
+        return window.App[viewName];
+      }
+
+      // If view is a function/component directly attached to window
+      if (window[viewName]) {
+        return window[viewName];
+      }
+
+      // Otherwise fail - views should be pre-included in the bundle
+      // In production, all views are already in dist_app.html/dist_app.min.html
+      throw new Error(`View not found: ${viewName}`);
+    },
+
+    /**
+     * Clear cache for specific view or all views
+     * @param {string|null} viewName - View name or null to clear all
+     */
+    clearCache: function(viewName = null) {
+      if (viewName) {
+        delete this.cache[viewName];
+      } else {
+        this.cache = {};
+      }
+    },
+
+    /**
+     * Get cache statistics
+     * @returns {Object} Stats with cached views count and pending loads
+     */
+    stats: function() {
+      return {
+        cached: Object.keys(this.cache).length,
+        loading: Object.keys(this.loading).length,
+        views: Object.keys(this.cache)
+      };
+    }
+  };
+
+  // Expose globally
+  window.App.LazyView = LazyView;
+
+  // Log availability
+  window.App.Logger.debug('[LazyView] Module initialized');
+
+  // Observe navigation to preload next views on idle time
+  if (typeof window.App?.Router !== 'undefined') {
+    const originalPush = window.history.pushState;
+    window.history.pushState = function(...args) {
+      const result = originalPush.apply(history, args);
+      // Trigger preload of commonly accessed views on route change
+      const relatedViews = {
+        'BedMap': ['Transfer', 'PatientRegister'],
+        'Transfer': ['BedMap', 'GlobalScenario'],
+        'PatientRegister': ['DischargeDeath', 'Transfer'],
+        'GlobalScenario': ['BedMap', 'PaControl']
+      };
+      const nextView = args[2]?.split('?view=')[1]?.split('&')[0];
+      if (nextView && relatedViews[nextView]) {
+        LazyView.preload(relatedViews[nextView]);
+      }
+      return result;
+    };
+  }
+})();
+</script>

@@ -1,0 +1,140 @@
+
+<script type="text/babel">
+  (function() {
+    window.App = window.App || {};
+    window.App.News = window.App.News || {};
+
+    /**
+     * Gera a lista de notícias para o Ticker (Barra CNN)
+     * Baseado nos dados do GlobalScenario e listas raw
+     */
+    window.App.News.generateTicker = (data, patientsList, blockedBedsList, paList) => {
+        // ACESSO TARDIO: Captura Utils no momento da execução da função, não na definição do arquivo.
+        // Isso garante que Utils já esteja carregado pelo Babel.
+        const Utils = window.App.Utils || {};
+        const items = [];
+        const now = new Date();
+        
+        if (!data || !data.stats) return ["SISTEMA ONLINE - AGUARDANDO DADOS..."];
+
+        // Validação de segurança: Se Utils não carregou, evita crash
+        if (!Utils.getDurationInfo) {
+            console.warn("Utils.getDurationInfo não disponível ainda.");
+            return ["CARREGANDO MÓDULOS..."];
+        }
+
+        // 1. GIRO DE LEITOS (SALDO)
+        const gap = data.outflows?.turnoverGap || 0;
+        const gapSign = gap > 0 ? '+' : '';
+        items.push(`SALDO DIÁRIO DE GIRO: ${gapSign}${gap}`);
+
+        // 2. REGRA UNIMED (TETO 115)
+        const UNIMED_LIMIT = 115;
+        const unimedPatients = (patientsList || []).filter(p => 
+            p.bed && 
+            !['SIM','ALTA','OBITO'].includes(p.dischargeStatus) &&
+            (p.insurance || '').toUpperCase().includes('UNIMED')
+        );
+        const unimedCount = unimedPatients.length;
+        const unimedPct = Math.round((unimedCount / UNIMED_LIMIT) * 100);
+        const unimedStatus = unimedPct >= 100 ? 'LOTADO' : unimedPct >= 90 ? 'CRÍTICO' : 'NORMAL';
+        items.push(`UNIMED: ${unimedCount}/${UNIMED_LIMIT} LEITOS (${unimedPct}%) - ${unimedStatus}`);
+
+        // 3. PACIENTES AGUARDANDO LEITO (TRANSFERÊNCIA INTERNA / INTERNAÇÃO)
+        const waitingForBed = (patientsList || []).filter(p => 
+            !p.bed && !['SIM','ALTA','OBITO'].includes(p.dischargeStatus)
+        );
+        if (waitingForBed.length > 0) {
+            const waitNames = waitingForBed.map(p => `${p.name.split(' ')[0]} (${p.sector || 'IND'})`).join(' | ');
+            items.push(`AGUARDANDO INTERNAÇÃO: ${waitingForBed.length} PACIENTES -> [ ${waitNames} ]`);
+        }
+
+        // 4. ALERTA DE LOTAÇÃO POR SETOR (>90%)
+        if (data.charts && data.charts.uiSectorData) {
+            [...data.charts.uiSectorData, ...data.charts.ctiSectorData].forEach(s => {
+                const cap = s.total || 1;
+                const occ = s.occupied || 0;
+                const pct = Math.round((occ/cap)*100);
+                if (pct >= 90 && cap > 2) { 
+                    items.push(`ALERTA ${s.name}: ${pct}% OCUPADO (${s.free} VAGOS)`);
+                }
+            });
+        }
+
+        // 5. LEITOS BLOQUEADOS DETALHADOS
+        if (blockedBedsList && blockedBedsList.length > 0) {
+            const cleaning = [];
+            const maintenance = [];
+            const reserved = [];
+
+            // Helper interno de duração
+            const getDurationStr = (dateStr) => {
+                if (!dateStr) return '';
+                const diff = now - new Date(dateStr);
+                if (isNaN(diff)) return '';
+                const hours = Math.floor(diff / (1000 * 60 * 60));
+                const mins = Math.floor((diff % (1000 * 60 * 60)) / 60000);
+                if (hours > 0) return `${hours}h ${mins}m`;
+                return `${mins}min`;
+            };
+
+            let totalCleanTime = 0;
+            let cleanCount = 0;
+
+            blockedBedsList.forEach(b => {
+                const r = (b.reason || '').toUpperCase();
+                if (r.includes('HIGIEN') || r.includes('LIMPEZA')) {
+                    const dur = getDurationStr(b.date);
+                    cleaning.push(`${b.bed} (${dur})`);
+                    if (b.date) {
+                        const diff = now - new Date(b.date);
+                        if (!isNaN(diff)) { totalCleanTime += diff; cleanCount++; }
+                    }
+                }
+                else if (r.includes('RESERVA')) reserved.push(`${b.bed}`);
+                else maintenance.push(`${b.bed} (${r} - ${getDurationStr(b.date)})`);
+            });
+
+            if (cleaning.length > 0) {
+                let avgStr = "";
+                if (cleanCount > 0) {
+                    const avgMs = totalCleanTime / cleanCount;
+                    const avgH = Math.floor(avgMs / (1000*60*60));
+                    const avgM = Math.floor((avgMs % (1000*60*60)) / 60000);
+                    avgStr = ` | MÉDIA: ${avgH}h ${avgM}m`;
+                }
+                items.push(`HIGIENIZAÇÃO (${cleaning.length}): ${cleaning.join(', ')}${avgStr}`);
+            }
+            
+            if (maintenance.length > 0) items.push(`BLOQUEIOS/MANUTENÇÃO: ${maintenance.join(' | ')}`);
+            if (reserved.length > 0) items.push(`RESERVAS CONFIRMADAS: ${reserved.join(', ')}`);
+        }
+
+        // 6. P.A. (FILA E TEMPOS)
+        if (paList && paList.length > 0) {
+            // Uso seguro do Utils
+            const paLongWait = paList.filter(p => Utils.getDurationInfo(p, now).diffMins > 360); // > 6h
+            if (paLongWait.length > 0) {
+                const longNames = paLongWait.map(p => {
+                    const info = Utils.getDurationInfo(p, now);
+                    return `${p.patient ? p.patient.split(' ')[0] : 'S/N'} (${info.duration})`;
+                }).join(', ');
+                items.push(`P.A. ATENÇÃO (>6H): ${paLongWait.length} PACIENTES -> [ ${longNames} ]`);
+            }
+            items.push(`FILA TOTAL P.A.: ${paList.length} PACIENTES | TEMPO MÉDIO: ${data.inflow?.pa?.avgTime || '0h'}`);
+        } else {
+            items.push(`FILA P.A.: ZERADA`);
+        }
+
+        // 7. ALTAS CONFIRMADAS (PENDENTES DE SAÍDA)
+        const waitingDischarge = (patientsList || []).filter(p => ['ALTA'].includes(p.dischargeStatus) && p.bed);
+        if (waitingDischarge.length > 0) {
+            const exitBeds = waitingDischarge.map(p => p.bed).join(', ');
+            items.push(`AGUARDANDO SAÍDA (ALTA): LEITOS ${exitBeds}`);
+        }
+
+        return items.length > 0 ? items : ["SISTEMA ONLINE - NENHUM AVISO"];
+    };
+
+  })();
+</script>

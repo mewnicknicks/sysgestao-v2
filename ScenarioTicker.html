@@ -1,0 +1,33 @@
+
+<script>
+  (function() {
+    window.App = window.App || {};
+
+    var ScenarioTicker = function(props) {
+        var tickerItems = props.tickerItems;
+
+        // Triple the items for seamless loop
+        var allItems = tickerItems.concat(tickerItems, tickerItems);
+
+        return React.createElement('div', { className: 'nx-gs-ticker' },
+            // "AO VIVO" badge with arrow
+            React.createElement('div', { className: 'nx-gs-ticker-badge' },
+                React.createElement('span', { className: 'nx-gs-ticker-badge-text' }, "AO VIVO")
+            ),
+            // Scrolling track
+            React.createElement('div', { className: 'nx-gs-ticker-track' },
+                React.createElement('div', { className: 'nx-gs-ticker-marquee' },
+                    allItems.map(function(text, i) {
+                        return React.createElement('span', { key: i, className: 'nx-gs-ticker-item' },
+                            React.createElement('span', { className: 'nx-gs-ticker-dot' }, "\u2022"),
+                            text
+                        );
+                    })
+                )
+            )
+        );
+    };
+
+    window.App.ScenarioTicker = ScenarioTicker;
+  })();
+</script>

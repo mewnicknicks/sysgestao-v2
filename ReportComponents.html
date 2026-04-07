@@ -1,0 +1,59 @@
+
+<script>
+  (function() {
+    window.App = window.App || {};
+    window.App.ReportComponents = {};
+
+    var useMemo = React.useMemo;
+
+    var ReportHeader = function(props) {
+        var title = props.title;
+        var subtitle = props.subtitle;
+        var date = props.date;
+        var userName = props.userName;
+        var HospitalLogo = window.HospitalLogo;
+        return React.createElement('div', { className: 'page-header' },
+            React.createElement('div', { className: 'header-logo-area' },
+                HospitalLogo
+                    ? React.createElement(HospitalLogo, { className: 'h-full w-auto max-h-[25mm] object-contain brightness-0' })
+                    : React.createElement('h1', { className: 'font-black text-2xl uppercase' }, 'HOSPITAL')
+            ),
+            React.createElement('div', { className: 'header-info-area' },
+                React.createElement('h2', { className: 'font-black text-xl uppercase tracking-tighter' }, title),
+                subtitle && React.createElement('span', { className: 'text-sm font-bold uppercase block mt-1 tracking-widest' }, subtitle),
+                date && React.createElement('span', { className: 'text-xs font-bold uppercase block mt-1' }, date),
+                userName && React.createElement('span', { className: 'text-[9px] uppercase text-gray-500 mt-1' }, 'Respons\u00e1vel: ', userName)
+            )
+        );
+    };
+
+    var ReportFooter = function(props) {
+        var text = props.text;
+        var pageInfo = props.pageInfo;
+        return React.createElement('div', { className: 'page-footer' },
+            React.createElement('span', { className: 'footer-text' }, text || "Relat\u00f3rio gerado digitalmente por SysGest\u00e3o. Uso interno."),
+            React.createElement('span', { className: 'footer-text' }, pageInfo)
+        );
+    };
+
+    var ReportPage = function(props) {
+        var children = props.children;
+        var headerProps = props.headerProps;
+        var footerProps = props.footerProps;
+        var className = props.className || "";
+        return React.createElement('div', { className: 'paper-page ' + className },
+            headerProps && React.createElement(ReportHeader, headerProps),
+            React.createElement('div', { className: 'page-body' },
+                children
+            ),
+            footerProps && React.createElement(ReportFooter, footerProps)
+        );
+    };
+
+    window.App.ReportComponents = {
+        ReportHeader: ReportHeader,
+        ReportFooter: ReportFooter,
+        ReportPage: ReportPage
+    };
+  })();
+</script>

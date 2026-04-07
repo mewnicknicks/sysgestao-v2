@@ -1,0 +1,88 @@
+<script>
+  (function() {
+    window.App = window.App || {};
+    window.App.Tests = window.App.Tests || {};
+
+    const assert = (condition, message) => {
+        if (!condition) throw new Error(message || "Assertion failed");
+    };
+
+    window.App.Tests.runAll = async () => {
+        console.log("%c[TESTS] Iniciando bateria de testes automatizados...", "color: #06b6d4; font-weight: bold; font-size: 14px;");
+        let passed = 0;
+        let failed = 0;
+
+        const runTest = async (name, testFn) => {
+            try {
+                await testFn();
+                console.log(`%c[PASS] %c${name}`, "color: #10b981; font-weight: bold;", "color: #a1a1aa;");
+                passed++;
+            } catch (e) {
+                console.error(`%c[FAIL] %c${name}`, "color: #f43f5e; font-weight: bold;", "color: #f43f5e;", e.message);
+                failed++;
+            }
+        };
+
+        // --- TESTES DE INTELLIGENCE ---
+        console.log("%c--- Módulo: Intelligence ---", "color: #8b5cf6; font-weight: bold;");
+        
+        await runTest("Intelligence: calculateOccupancyRate (Cálculo Básico)", async () => {
+            const result = window.App.Intelligence.calculateOccupancyRate(50, 100);
+            assert(result === 50, `Esperado 50, recebido ${result}`);
+        });
+
+        await runTest("Intelligence: calculateOccupancyRate (Divisão por Zero)", async () => {
+            const result = window.App.Intelligence.calculateOccupancyRate(50, 0);
+            assert(result === 0, `Esperado 0, recebido ${result}`);
+        });
+
+        await runTest("Intelligence: calculateAverageStay (Cálculo de Permanência)", async () => {
+            const patients = [
+                { admissionDate: new Date(Date.now() - 86400000 * 2).toISOString() }, // 2 dias
+                { admissionDate: new Date(Date.now() - 86400000 * 4).toISOString() }  // 4 dias
+            ];
+            const result = window.App.Intelligence.calculateAverageStay(patients);
+            assert(result === 3, `Esperado 3, recebido ${result}`);
+        });
+
+        await runTest("Intelligence: calculateAverageStay (Lista Vazia)", async () => {
+            const result = window.App.Intelligence.calculateAverageStay([]);
+            assert(result === 0, `Esperado 0, recebido ${result}`);
+        });
+
+        // --- TESTES DE SERVICE ---
+        console.log("%c--- Módulo: Service ---", "color: #8b5cf6; font-weight: bold;");
+        
+        await runTest("Service: checkLogin (Verificação de Assinatura)", async () => {
+            assert(typeof window.App.Service.checkLogin === 'function', "checkLogin não é uma função");
+        });
+
+        await runTest("Service: getCriticalData (Verificação de Assinatura)", async () => {
+            assert(typeof window.App.Service.getCriticalData === 'function', "getCriticalData não é uma função");
+        });
+
+        // --- TESTES DE UTILS ---
+        console.log("%c--- Módulo: Utils ---", "color: #8b5cf6; font-weight: bold;");
+        
+        await runTest("Utils: normalize (Remoção de Acentos)", async () => {
+            const result = window.App.Utils.normalize("João CTI-01");
+            assert(result === "JOAO CTI-01", `Esperado 'JOAO CTI-01', recebido '${result}'`);
+        });
+
+        await runTest("Utils: getStatusColor (Mapeamento de Cores)", async () => {
+            const result = window.App.Utils.getStatusColor("OCUPADO");
+            assert(result === "rose", `Esperado 'rose', recebido '${result}'`);
+        });
+
+        // --- RESULTADO FINAL ---
+        const total = passed + failed;
+        console.log(`%c[TESTS] Concluído. Passaram: ${passed}/${total}, Falharam: ${failed}/${total}`, `color: ${failed > 0 ? '#f43f5e' : '#10b981'}; font-weight: bold; font-size: 14px; margin-top: 10px;`);
+        
+        if (window.App.UI && window.App.UI.Toast) {
+            window.App.UI.Toast.show(`Testes: ${passed} OK, ${failed} Falhas`, failed > 0 ? 'error' : 'success');
+        }
+
+        return { passed, failed, total };
+    };
+  })();
+</script>

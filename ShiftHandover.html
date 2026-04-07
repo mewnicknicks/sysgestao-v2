@@ -1,0 +1,352 @@
+
+<script>
+  (function() {
+    window.App = window.App || {};
+
+    var ShiftHandover = function() {
+      var ctx = window.App.Context.useAppContext();
+      var user = ctx.user;
+      var propDischarge = ctx.dischargeList;
+      var propPa = ctx.paList;
+      var propBlocked = ctx.blockedBedsList;
+      var propTransfers = ctx.transferList;
+      var patientsList = ctx.patientsList;
+      var structure = ctx.structure;
+      var actions = ctx.actions;
+      var preloadedForecast = ctx.preloadedForecast;
+
+      var UI = window.App.UI || {};
+      var OfflineDB = window.App.OfflineDB;
+      var Intelligence = window.App.Intelligence || {};
+
+      var admissionsState = React.useState([]);
+      var admissions = admissionsState[0];
+      var setAdmissions = admissionsState[1];
+
+      var obsListState = React.useState([]);
+      var obsList = obsListState[0];
+      var setObsList = obsListState[1];
+
+      var obsInputState = React.useState('');
+      var obsInput = obsInputState[0];
+      var setObsInput = obsInputState[1];
+
+      var isDbLoadedState = React.useState(false);
+      var isDbLoaded = isDbLoadedState[0];
+      var setIsDbLoaded = isDbLoadedState[1];
+
+      // Efeito de Carga Inicial (DB -> State) com Migração de LocalStorage
+      React.useEffect(function() {
+          var initData = async function() {
+              var loadedAdm = [];
+              var loadedObs = [];
+              var loadedInput = '';
+
+              if (OfflineDB) {
+                  try {
+                      var savedData = await OfflineDB.getList('shiftHandover');
+                      if (savedData) {
+                          loadedAdm = savedData.admissions || [];
+                          loadedObs = savedData.obsList || [];
+                          loadedInput = savedData.obsInput || '';
+                      } else {
+                          // Migração de Legado (LocalStorage)
+                          var lsAdm = window.App.safeStorage.getItem('sys_shift_adm', true);
+                          var lsObs = window.App.safeStorage.getItem('sys_shift_obs', true);
+                          var lsInput = window.App.safeStorage.getItem('sys_shift_input', true);
+
+                          if (lsAdm || lsObs || lsInput) {
+                              if (lsAdm) loadedAdm = JSON.parse(lsAdm);
+                              if (lsObs) loadedObs = JSON.parse(lsObs);
+                              if (lsInput) loadedInput = lsInput;
+
+                              // Limpa LocalStorage após migrar
+                              window.App.safeStorage.removeItem('sys_shift_adm', true);
+                              window.App.safeStorage.removeItem('sys_shift_obs', true);
+                              window.App.safeStorage.removeItem('sys_shift_input', true);
+                          }
+                      }
+                  } catch (e) { console.warn("Erro ao carregar ShiftHandover DB:", e); }
+              }
+
+              setAdmissions(loadedAdm);
+              setObsList(loadedObs);
+              setObsInput(loadedInput);
+              setIsDbLoaded(true);
+          };
+          initData();
+      }, []);
+
+      // Efeito de Salvamento (State -> DB)
+      React.useEffect(function() {
+          if (!isDbLoaded || !OfflineDB) return;
+          var saveData = { admissions: admissions, obsList: obsList, obsInput: obsInput };
+          OfflineDB.saveList('shiftHandover', saveData).catch(function(err) { console.error("Erro ao salvar Plantão Offline:", err); });
+      }, [admissions, obsList, obsInput, isDbLoaded]);
+
+      var currentAdmState = React.useState({ name: '', convention: '', bed: '', details: '' });
+      var currentAdm = currentAdmState[0];
+      var setCurrentAdm = currentAdmState[1];
+
+      var isAiLoadingState = React.useState(false);
+      var isAiLoading = isAiLoadingState[0];
+      var setIsAiLoading = isAiLoadingState[1];
+
+      var showMenuState = React.useState(false);
+      var showMenu = showMenuState[0];
+      var setShowMenu = showMenuState[1];
+
+      var mobilePreviewOpenState = React.useState(false);
+      var mobilePreviewOpen = mobilePreviewOpenState[0];
+      var setMobilePreviewOpen = mobilePreviewOpenState[1];
+
+      var toastState = React.useState({ show: false, message: '', type: 'success' });
+      var toast = toastState[0];
+      var setToast = toastState[1];
+
+      var INSURANCE_OPTIONS = React.useMemo(function() {
+          return (structure && structure.insurances) || [];
+      }, [structure]);
+
+      // --- CÁLCULO DE ESTATÍSTICAS (INTELLIGENCE) ---
+      var statsData = React.useMemo(function() {
+          if (!Intelligence.processHospitalState) return {};
+
+          var todayISO = new Date().toISOString().split('T')[0];
+          var forecastData = preloadedForecast ? (preloadedForecast[todayISO] || {}) : {};
+
+          return Intelligence.processHospitalState({
+              structure: structure || { sectors: [], beds: [] },
+              patientsList: patientsList || [],
+              blockedBedsList: propBlocked || [],
+              paList: propPa || [],
+              dischargeList: propDischarge || [],
+              transferList: propTransfers || [],
+              preloadedForecast: forecastData
+          });
+      }, [structure, patientsList, propBlocked, propPa, propDischarge, propTransfers, preloadedForecast]);
+
+      // --- GERADOR DE TEXTO (AGORA VIA TEMPLATE) ---
+      var getReportText = function() {
+          if (window.App.Templates && window.App.Templates.shiftHandover) {
+              var combinedData = Object.assign({}, statsData, {
+                  dischargeList: propDischarge,
+                  blockedBedsList: propBlocked,
+                  transferList: propTransfers,
+                  paList: propPa
+              });
+              return window.App.Templates.shiftHandover(combinedData, user, admissions, obsList);
+          }
+          return "Erro: Template não carregado.";
+      };
+
+      var copyToClipboard = function() {
+          navigator.clipboard.writeText(getReportText());
+          setToast({ show: true, message: 'Relatório copiado!', type: 'success' });
+          setTimeout(function() { setToast({ show: false, message: '', type: 'success' }); }, 3000);
+      };
+
+      // --- AÇÃO DE IA ---
+      var handleAiRewrite = async function() {
+          if (!obsInput) return;
+          setIsAiLoading(true);
+          try {
+              var text = await actions.callGeminiAi(obsInput, 'SHIFT_HANDOVER');
+
+              if (text && !text.startsWith("Erro")) {
+                  setObsInput(text.trim().toUpperCase());
+                  setToast({ show: true, message: 'Texto reescrito com sucesso!', type: 'success' });
+                  setTimeout(function() { setToast({ show: false, message: '', type: 'success' }); }, 3000);
+              } else {
+                  throw new Error(text);
+              }
+          } catch (e) {
+              console.error("Erro IA:", e);
+              setToast({ show: true, message: 'Falha na IA: ' + (e.message || 'Erro desconhecido'), type: 'error' });
+              setTimeout(function() { setToast({ show: false, message: '', type: 'success' }); }, 5000);
+          } finally {
+              setIsAiLoading(false);
+          }
+      };
+
+      // Confirm + limpar helper
+      var handleClearShiftData = async function() {
+          var ok = await UI.confirmThen("Limpar dados?");
+          if (ok) { setAdmissions([]); setObsList([]); setObsInput(''); }
+          setShowMenu(false);
+      };
+
+      if (!isDbLoaded) {
+          return React.createElement('div', { className: 'flex h-full items-center justify-center text-cyan-500' }, React.createElement('i', { className: 'ph-bold ph-circle-notch animate-spin text-4xl' }));
+      }
+
+      return React.createElement('div', { className: 'nx-container !h-auto !overflow-visible px-10 pt-5 pb-24 animate-fade-in flex flex-col h-full' },
+          React.createElement(UI.Toast, { show: toast.show, message: toast.message, type: toast.type }),
+
+          React.createElement('div', { className: 'nx-header shrink-0 print-hidden' },
+              React.createElement('div', { className: 'nx-header-title-group' },
+                  React.createElement('h1', { className: 'nx-header-title' }, "Passagem de Plantão"),
+                  React.createElement('p', { className: 'nx-header-subtitle' }, "Relatório Consolidado")
+              ),
+              React.createElement('div', { className: 'relative' },
+                  React.createElement('button', { onClick: function() { setShowMenu(!showMenu); }, className: 'nx-header-btn group' },
+                      React.createElement('i', { className: 'ph-bold ph-list text-2xl group-hover:scale-110 transition-transform' })
+                  ),
+                  showMenu && React.createElement(React.Fragment, null,
+                      React.createElement('div', { className: 'nx-dropdown-overlay', onClick: function() { setShowMenu(false); } }),
+                      React.createElement('div', { className: 'nx-dropdown-menu' },
+                          React.createElement('button', { onClick: handleClearShiftData, className: 'nx-dropdown-btn' },
+                              React.createElement('i', { className: 'ph-bold ph-trash text-rose-500 text-lg' }), " Limpar Dados"
+                          )
+                      )
+                  )
+              )
+          ),
+
+          React.createElement('div', { className: 'nx-header-divider shrink-0 print-hidden' }),
+
+          React.createElement('div', { className: 'flex-1 lg:grid lg:grid-cols-3 gap-8 min-h-0 relative h-full' },
+
+             // COLUNA 1: ADMISSÕES (CARD)
+             React.createElement('div', { className: 'flex flex-col h-full min-h-[500px]' },
+                React.createElement(UI.Card, { className: 'p-6 flex flex-col h-full overflow-hidden' },
+                    React.createElement('div', { className: 'nx-settings-card-header shrink-0 h-14' },
+                        React.createElement('h3', { className: 'nx-settings-card-header-title' }, React.createElement('i', { className: 'ph-bold ph-star text-blue-500 mr-2' }), " Admissões Previstas")
+                    ),
+
+                    React.createElement('form', {
+                        onSubmit: function(e) {
+                            e.preventDefault();
+                            if (currentAdm.name) setAdmissions(admissions.concat([Object.assign({}, currentAdm, { id: Date.now() })]));
+                            setCurrentAdm({ name: '', convention: '', bed: '', details: '' });
+                        },
+                        className: 'mb-6 shrink-0'
+                    },
+                        React.createElement(UI.Input, { label: "Paciente", value: currentAdm.name, onChange: function(e) { setCurrentAdm(Object.assign({}, currentAdm, { name: e.target.value.toUpperCase() })); }, required: true, icon: "ph-user", className: "!mb-3" }),
+                        React.createElement('div', { className: 'grid grid-cols-2 gap-3 mb-4' },
+                            React.createElement(UI.SearchableSelect, { label: "Convênio", value: currentAdm.convention, onChange: function(e) { setCurrentAdm(Object.assign({}, currentAdm, { convention: e.target.value })); }, options: INSURANCE_OPTIONS, required: true, className: "!mb-0" }),
+                            React.createElement(UI.Input, { label: "Leito", value: currentAdm.bed, onChange: function(e) { setCurrentAdm(Object.assign({}, currentAdm, { bed: e.target.value.toUpperCase() })); }, icon: "ph-bed", className: "!mb-0" })
+                        ),
+                        React.createElement('button', { type: 'submit', className: 'btn-action-confirm w-full' }, "Adicionar à Lista")
+                    ),
+
+                    React.createElement('div', { className: 'flex-1 overflow-y-auto custom-scrollbar pr-1 space-y-2' },
+                        admissions.map(function(adm) {
+                            return React.createElement('div', { key: adm.id, className: 'nx-list-item group !p-3' },
+                                React.createElement('div', { className: 'flex justify-between items-start w-full' },
+                                    React.createElement('div', { className: 'flex-1 min-w-0 pr-4' },
+                                        React.createElement('span', { className: 'text-xs font-black nx-text-heading block uppercase tracking-wide truncate group-hover:text-blue-600 dark:group-hover:text-cyan-400 transition-colors' }, adm.name),
+                                        React.createElement('div', { className: 'flex items-center gap-2 mt-1' },
+                                            React.createElement('span', { className: 'nx-badge-neutral' }, adm.convention),
+                                            adm.bed && React.createElement('span', { className: 'nx-text-label' }, "• LEITO ", adm.bed)
+                                        )
+                                    ),
+                                    React.createElement('button', { onClick: function() { setAdmissions(function(prev) { return prev.filter(function(a) { return a.id !== adm.id; }); }); }, className: 'text-blue-300 dark:text-slate-600 hover:text-rose-500 transition-colors opacity-0 group-hover:opacity-100 p-1' },
+                                        React.createElement('i', { className: 'ph-bold ph-trash text-lg' })
+                                    )
+                                )
+                            );
+                        }),
+                        admissions.length === 0 && React.createElement('div', { className: 'text-center py-10 flex flex-col items-center opacity-40' },
+                            React.createElement('i', { className: 'ph-bold ph-star text-4xl mb-2 text-blue-300 dark:text-slate-700' }),
+                            React.createElement('span', { className: 'text-[10px] font-bold uppercase text-blue-400 dark:text-slate-600' }, "Nenhuma admissão")
+                        )
+                    )
+                )
+             ),
+
+             // COLUNA 2: OBSERVAÇÕES (CARD)
+             React.createElement('div', { className: 'flex flex-col h-full min-h-[500px]' },
+                React.createElement(UI.Card, { className: 'p-6 flex flex-col h-full overflow-hidden' },
+                    React.createElement('div', { className: 'nx-settings-card-header shrink-0 h-14' },
+                        React.createElement('h3', { className: 'nx-settings-card-header-title' }, React.createElement('i', { className: 'ph-bold ph-chat-text text-amber-500 mr-2' }), " Observações"),
+                        React.createElement('button', { type: 'button', onClick: handleAiRewrite, disabled: !obsInput || isAiLoading, className: 'btn-action-cancel text-[9px] h-8 px-3' },
+                            isAiLoading
+                                ? React.createElement(React.Fragment, null, React.createElement('i', { className: 'ph-bold ph-circle-notch animate-spin' }), " Processando...")
+                                : React.createElement(React.Fragment, null, React.createElement('i', { className: 'ph-bold ph-magic-wand' }), " IA Rewrite")
+                        )
+                    ),
+
+                    React.createElement('div', { className: 'flex flex-col gap-4 mb-6 shrink-0' },
+                        React.createElement('textarea', {
+                            value: obsInput,
+                            onChange: function(e) { setObsInput(e.target.value.toUpperCase()); },
+                            className: 'nx-input-box h-[120px] uppercase font-medium transition-colors',
+                            placeholder: "Digite pendências, avisos ou intercorrências..."
+                        }),
+                        React.createElement('button', {
+                            onClick: function() {
+                                if (obsInput.trim()) {
+                                    setObsList(obsList.concat([{ id: Date.now(), text: obsInput.trim().toUpperCase() }]));
+                                    setObsInput('');
+                                } else {
+                                    var textarea = document.querySelector('textarea');
+                                    if (textarea) textarea.focus();
+                                }
+                            },
+                            className: 'btn-action-confirm w-full'
+                        },
+                            React.createElement('i', { className: 'ph-bold ph-plus mr-2' }), " Inserir Observação"
+                        )
+                    ),
+
+                    React.createElement('div', { className: 'flex-1 overflow-y-auto custom-scrollbar pr-1 space-y-2' },
+                        obsList.map(function(obs) {
+                            return React.createElement('div', { key: obs.id, className: 'nx-list-item group !p-3 hover:!border-amber-500/50' },
+                                React.createElement('div', { className: 'flex justify-between items-start w-full' },
+                                    React.createElement('p', { className: 'text-xs font-medium nx-text-heading leading-relaxed uppercase pr-4 whitespace-pre-wrap' }, obs.text),
+                                    React.createElement('button', { onClick: function() { setObsList(function(prev) { return prev.filter(function(item) { return item.id !== obs.id; }); }); }, className: 'text-blue-300 dark:text-slate-600 hover:text-rose-500 transition-colors opacity-0 group-hover:opacity-100 shrink-0 p-1' },
+                                        React.createElement('i', { className: 'ph-bold ph-trash text-lg' })
+                                    )
+                                )
+                            );
+                        }),
+                        obsList.length === 0 && React.createElement('div', { className: 'text-center py-10 flex flex-col items-center opacity-40' },
+                            React.createElement('i', { className: 'ph-bold ph-check-circle text-4xl mb-2 text-blue-300 dark:text-slate-700' }),
+                            React.createElement('span', { className: 'text-[10px] font-bold uppercase text-blue-400 dark:text-slate-600' }, "Sem pendências")
+                        )
+                    )
+                )
+             ),
+
+             // COLUNA 3: PREVIEW CELULAR (Desktop Only)
+             React.createElement('div', { className: 'hidden lg:flex flex-col items-center justify-center h-full relative bg-transparent' },
+                UI.PhonePreview && React.createElement(UI.PhonePreview, {
+                    reportText: getReportText(),
+                    onCopy: copyToClipboard,
+                    className: 'shadow-[0_0_60px_rgba(0,0,0,0.5)] transform scale-95 hover:scale-100 transition-transform duration-500'
+                })
+             )
+          ),
+
+          // MOBILE FAB
+          React.createElement('div', { className: 'lg:hidden fixed bottom-6 right-6 z-50 animate-page-enter' },
+              React.createElement('button', { onClick: function() { setMobilePreviewOpen(true); }, className: 'w-14 h-14 bg-emerald-500 rounded-full flex items-center justify-center text-white shadow-2xl hover:scale-110 active:scale-95 transition-all' },
+                  React.createElement('i', { className: 'ph-bold ph-whatsapp-logo text-2xl' })
+              )
+          ),
+
+          // MOBILE PREVIEW MODAL (FIXED HEADER CUTOFF)
+          mobilePreviewOpen && UI.Modal && UI.PhonePreview && React.createElement(UI.Modal, { isOpen: true, onClose: function() { setMobilePreviewOpen(false); }, variant: "transparent", className: 'p-0 flex items-center justify-center h-screen w-screen !overflow-visible' },
+              React.createElement('div', { className: 'relative w-full h-full flex items-center justify-center p-4 !bg-transparent' },
+                  React.createElement('div', { className: 'max-h-[90vh] w-full flex justify-center !overflow-visible bg-transparent' },
+                    React.createElement(UI.PhonePreview, {
+                        reportText: getReportText(),
+                        onCopy: copyToClipboard,
+                        className: 'shadow-2xl',
+                        onClose: function() { setMobilePreviewOpen(false); }
+                    })
+                  ),
+                  React.createElement('button', {
+                    onClick: function() { setMobilePreviewOpen(false); },
+                    className: 'absolute top-4 right-4 w-10 h-10 bg-black/50 text-white rounded-full flex items-center justify-center backdrop-blur-md z-50'
+                  },
+                    React.createElement('i', { className: 'ph-bold ph-x text-lg' })
+                  )
+              )
+          )
+      );
+    };
+    window.App.ShiftHandover = ShiftHandover;
+  })();
+</script>

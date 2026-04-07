@@ -1,0 +1,388 @@
+
+<script>
+  (function() {
+    window.App = window.App || {};
+
+    var REASON_OPTIONS = [
+        { value: 'ALTA_UI', label: 'ALTA PARA UI (Transferência Interna)' },
+        { value: 'ALTA_CASA', label: 'ALTA PARA CASA / EXTERNA' },
+        { value: 'OBITO', label: 'ÓBITO' }
+    ];
+
+    var RELEASED_OPTIONS = [
+        { value: 'SIM', label: 'SIM (Finalizar Processo)' },
+        { value: 'NAO', label: 'NÃO (Manter Pendência)' }
+    ];
+
+    // REMOVIDO DAQUI: SECTOR_MACRO_OPTIONS AGORA É DINÂMICO DENTRO DO COMPONENTE
+
+    var DischargeDeath = function() {
+        var ctx = window.App.Context.useAppContext();
+        var user = ctx.user;
+        var patientsList = ctx.patientsList;
+        var dischargeList = ctx.dischargeList;
+        var blockedBedsList = ctx.blockedBedsList;
+        var onRefresh = ctx.onRefresh;
+        var onGlobalUpdate = ctx.onGlobalUpdate;
+        var structure = ctx.structure;
+        var actions = ctx.actions;
+        var UI = window.App.UI || {};
+        var Utils = window.App.Utils || {};
+        var Service = window.App.Service;
+
+        // --- PADRÃO OTIMISTA (HOOKS) ---
+        var optimisticResult = window.App.Hooks.useOptimisticAction();
+        var isOptimistic = optimisticResult.isOptimistic;
+        var runOptimistic = optimisticResult.run;
+        // `dischargeList` agora contém apenas os últimos 7 dias (carregamento rápido)
+        var localHistoryState = window.App.Hooks.useLocalState(dischargeList || [], isOptimistic);
+        var localHistory = localHistoryState[0];
+        var setLocalHistory = localHistoryState[1];
+
+        // Helper para Data Local
+        var getToday = function() {
+            var d = new Date();
+            return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+        };
+
+        var getInitialFormState = function() {
+            return {
+                attendance: '', patientName: '', insurance: '', originBed: '', reason: '',
+                date: getToday(),
+                time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+                requester: '', receiverDoctor: '', specialty: '', destinationBed: '', communicated: '', released: ''
+            };
+        };
+
+        var formDataState = React.useState(getInitialFormState());
+        var formData = formDataState[0];
+        var setFormData = formDataState[1];
+
+        var isPatientFoundState = React.useState(false);
+        var isPatientFound = isPatientFoundState[0];
+        var setIsPatientFound = isPatientFoundState[1];
+
+        var isPendingEditState = React.useState(false);
+        var isPendingEdit = isPendingEditState[0];
+        var setIsPendingEdit = isPendingEditState[1];
+
+        var recentHistoryState = React.useState([]);
+        var recentHistory = recentHistoryState[0];
+        var setRecentHistory = recentHistoryState[1];
+
+        var incompleteRecordsState = React.useState([]);
+        var incompleteRecords = incompleteRecordsState[0];
+        var setIncompleteRecords = incompleteRecordsState[1];
+
+        var showMenuState = React.useState(false);
+        var showMenu = showMenuState[0];
+        var setShowMenu = showMenuState[1];
+
+        // --- ESTADOS DO MODAL DE HISTÓRICO (LAZY LOAD) ---
+        var showHistoryModalState = React.useState(false);
+        var showHistoryModal = showHistoryModalState[0];
+        var setShowHistoryModal = showHistoryModalState[1];
+
+        var modalHistoryDataState = React.useState([]);
+        var modalHistoryData = modalHistoryDataState[0];
+        var setModalHistoryData = modalHistoryDataState[1];
+
+        var isLoadingHistoryState = React.useState(false);
+        var isLoadingHistory = isLoadingHistoryState[0];
+        var setIsLoadingHistory = isLoadingHistoryState[1];
+
+        var historyFiltersState = React.useState({
+            startDate: new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0],
+            endDate: getToday(),
+            insurance: '',
+            search: ''
+        });
+        var historyFilters = historyFiltersState[0];
+        var setHistoryFilters = historyFiltersState[1];
+
+        var targetSectorState = React.useState('');
+        var targetSector = targetSectorState[0];
+        var setTargetSector = targetSectorState[1];
+
+        // --- DADOS ESTRUTURAIS ---
+        var INSURANCE_OPTIONS = window.App.INSURANCE_OPTIONS || [];
+
+        var SPECIALTY_OPTIONS = React.useMemo(function() {
+            return (structure?.specialties || []).map(function(s) { return { value: s.name || s, label: s.name || s }; });
+        }, [structure]);
+
+        // --- MENU DINÂMICO PARA SETOR MACRO (ALTA UI) ---
+        var SECTOR_MACRO_OPTIONS = React.useMemo(function() {
+            // Tenta buscar do menu configurado "MENU_ALTAS" (Chave 'ALTAS' no objeto menus)
+            var menu = structure?.menus?.['ALTAS'];
+
+            if (menu && menu.length > 0) {
+                return menu.map(function(s) { return { value: s, label: s }; });
+            }
+
+            // Fallback padrão se não houver configuração
+            return [
+                { value: 'UNIDADE DE INTERNAÇÃO', label: 'UNIDADE DE INTERNAÇÃO' },
+                { value: 'CTI', label: 'TERAPIA INTENSIVA (CTI)' },
+                { value: 'PRONTO ATENDIMENTO', label: 'PRONTO ATENDIMENTO' }
+            ];
+        }, [structure]);
+
+        // --- PROCESSAMENTO DE DADOS (RECENTES) ---
+        React.useEffect(function() {
+            if (localHistory) {
+                // Sincroniza e inverte para mostrar mais recentes primeiro
+                var reversed = localHistory.slice().reverse();
+                setRecentHistory(reversed);
+
+                // Filtra pendências
+                var pending = reversed.filter(function(rec) {
+                    if (rec.released === 'NAO' || !rec.released) return true;
+                    if (rec.reason === 'ALTA_UI' && !rec.destinationBed) return true;
+                    if (['ALTA_CASA', 'OBITO'].includes(rec.reason) && (!rec.date || !rec.time || !rec.patientName)) return true;
+                    return false;
+                });
+                setIncompleteRecords(pending);
+            }
+        }, [localHistory]);
+
+        // --- ESTATÍSTICAS (Baseadas no cache de 7 dias é suficiente para KPIS diários) ---
+        var stats = React.useMemo(function() {
+            var today = new Date().toISOString().split('T')[0];
+            var todayRecs = recentHistory.filter(function(h) { return h.date && h.date.startsWith(today); });
+            return {
+                total: todayRecs.length,
+                obitos: todayRecs.filter(function(h) { return h.reason === 'OBITO'; }).length,
+                altaCasa: todayRecs.filter(function(h) { return h.reason === 'ALTA_CASA'; }).length,
+                transf: todayRecs.filter(function(h) { return h.reason === 'ALTA_UI'; }).length,
+                pendentes: incompleteRecords.length
+            };
+        }, [recentHistory, incompleteRecords]);
+
+        // --- HANDLER: BUSCAR HISTÓRICO SERVER-SIDE ---
+        var fetchHistory = async function() {
+            setIsLoadingHistory(true);
+            try {
+                // Busca dados antigos do servidor
+                var data = await Service.Flows.getDischargeHistoryRange(historyFilters.startDate, historyFilters.endDate);
+                setModalHistoryData(data || []);
+                if (UI.Toast) UI.Toast.show('Carregados ' + data.length + ' registros.', "success");
+            } catch (e) {
+                console.error(e);
+                if (UI.Toast) UI.Toast.show("Erro ao buscar histórico.", "error");
+            } finally {
+                setIsLoadingHistory(false);
+            }
+        };
+
+        // --- FILTRO DO HISTÓRICO CARREGADO ---
+        var filteredModalData = React.useMemo(function() {
+            return modalHistoryData.filter(function(h) {
+                if (historyFilters.search && !String(h.patientName).toUpperCase().includes(historyFilters.search.toUpperCase())) return false;
+                if (historyFilters.insurance && h.insurance !== historyFilters.insurance) return false;
+                return true;
+            });
+        }, [modalHistoryData, historyFilters.search, historyFilters.insurance]);
+
+        // --- LEITOS DISPONÍVEIS ---
+        var availableBedsOptions = React.useMemo(function() {
+            if (!structure?.beds || !targetSector) return [];
+            var allowedTypes = [];
+
+            // Lógica Adaptativa baseada no nome do Setor Macro
+            // Se for CTI/UTI -> tipos CTI. Se não, assume UI.
+            var targetUpper = targetSector.toUpperCase();
+            if (targetUpper.includes('CTI') || targetUpper.includes('UTI') || targetUpper.includes('INTENSIVA')) {
+                allowedTypes = ['CTI', 'CTI_EST', 'CETIPE'];
+            } else {
+                allowedTypes = ['UI', 'UI_EST', 'PED'];
+            }
+
+            var occupied = new Set();
+            (patientsList || []).forEach(function(p) {
+                if (p.bed && !['SIM','ALTA','OBITO'].includes(p.dischargeStatus)) {
+                    occupied.add(Utils.normalize(p.bed));
+                }
+            });
+
+            return structure.beds.filter(function(b) {
+                var normBed = Utils.normalize(b.number);
+                if (occupied.has(normBed)) return false;
+
+                // Filtra pelo tipo de leito associado ao setor
+                var bedSectorMeta = structure.sectors?.find(function(s) { return Utils.normalize(s.name) === Utils.normalize(b.sector); });
+                var type = bedSectorMeta ? bedSectorMeta.type : 'UI';
+
+                // Verifica se o tipo do leito é compatível com a Macro escolhida
+                // Ex: Se Macro CTI, só leitos CTI.
+                return allowedTypes.includes(type);
+            }).map(function(b) { return { value: b.number, label: b.number + ' (' + b.sector + ')' }; })
+              .sort(function(a, b) { return a.value.localeCompare(b.value, undefined, { numeric: true }); });
+        }, [structure, patientsList, targetSector, Utils]);
+
+        // --- HANDLERS ---
+        var handleAttendanceSearch = function(val) {
+            var searchValue = String(val).trim();
+            setFormData(function(prev) { return Object.assign({}, prev, { attendance: val }); });
+            if (!searchValue) {
+                setFormData(function(prev) { return Object.assign({}, prev, { patientName: '', insurance: '', originBed: '', receiverDoctor: '' }); });
+                setIsPatientFound(false);
+                return;
+            }
+            var found = patientsList ? patientsList.find(function(p) { return String(p.attendance).trim() === searchValue; }) : null;
+            if (found) {
+                setFormData(function(prev) {
+                    return Object.assign({}, prev, {
+                        patientName: found.name,
+                        insurance: found.insurance,
+                        originBed: found.bed,
+                        receiverDoctor: found.assistantDoctor || ''
+                    });
+                });
+                setIsPatientFound(true);
+            } else {
+                setFormData(function(prev) { return Object.assign({}, prev, { patientName: '', insurance: '', originBed: '', receiverDoctor: '' }); });
+                setIsPatientFound(false);
+            }
+        };
+
+        // Anti-duplo submit
+        var submitHookResult = (UI.useSubmit ? UI.useSubmit() : { isSubmitting: false, submit: async function(fn) { return await fn(); } });
+        var isSubmitting = submitHookResult.isSubmitting;
+        var submit = submitHookResult.submit;
+
+        var handleSubmit = async function() {
+            var finalReleased = formData.released;
+            if (formData.reason === 'ALTA_UI' && !finalReleased) finalReleased = 'NAO';
+
+            var issueText = "";
+            if (finalReleased === 'NAO') issueText = "Aguardando Liberação";
+            else if (formData.reason === 'ALTA_UI' && !formData.destinationBed) issueText = "Falta Leito Destino";
+            else if (formData.reason === 'ALTA_UI' && finalReleased !== 'SIM') issueText = "Transf. Pendente";
+            else if ((formData.reason === 'ALTA_CASA' || formData.reason === 'OBITO') && (!formData.date || !formData.time)) issueText = "Dados Incompletos";
+
+            var payload = {
+                id: formData.id || String(Date.now()),
+                formData: formData,
+                released: finalReleased,
+                issue: issueText,
+                finishedAt: finalReleased === 'SIM' ? new Date().toISOString() : ''
+            };
+            // Flatten formData fields into payload
+            payload = Object.assign({}, formData, {
+                id: formData.id || String(Date.now()),
+                released: finalReleased,
+                issue: issueText,
+                finishedAt: finalReleased === 'SIM' ? new Date().toISOString() : ''
+            });
+
+            runOptimistic(
+                function() {
+                    var newList = localHistory.filter(function(item) { return item.id !== payload.id; }).concat([payload]);
+                    setLocalHistory(newList);
+                    if (onGlobalUpdate) onGlobalUpdate('dischargeList', newList);
+
+                    if (finalReleased === 'SIM' && payload.attendance && patientsList) {
+                        var newPatientsList = patientsList.filter(function(p) { return String(p.attendance) !== String(payload.attendance); });
+                        if (onGlobalUpdate) onGlobalUpdate('patients', newPatientsList);
+                        if (payload.originBed && blockedBedsList) {
+                            var newBlock = { id: 'temp-' + Date.now(), bed: payload.originBed, reason: 'HIGIENIZACAO', user: user.name, date: new Date().toISOString() };
+                            var newBlockedList = blockedBedsList.concat([newBlock]);
+                            if (onGlobalUpdate) onGlobalUpdate('blockedBeds', newBlockedList);
+                        }
+                    }
+                    setFormData(getInitialFormState());
+                    setIsPatientFound(false);
+                    setTargetSector('');
+                    setIsPendingEdit(false);
+                    if (UI.Toast) UI.Toast.show(finalReleased === 'SIM' ? "Movimentação registrada" : "Pendência salva", "success");
+                },
+                async function() {
+                    if (finalReleased === 'SIM') {
+                        var res = await actions.dischargeWithCleaning(payload, payload.originBed, user.matricula);
+                        if (res && res.status === 'ERROR') throw new Error(res.message);
+                    } else {
+                        await actions.discharge(payload);
+                    }
+                }
+            );
+        };
+
+        var DDComponents = window.App.DischargeDeathComponents || {};
+        var DischargeDeathStats = DDComponents.DischargeDeathStats;
+        var DischargeDeathForm = DDComponents.DischargeDeathForm;
+        var DischargeDeathPendingList = DDComponents.DischargeDeathPendingList;
+        var DischargeDeathModals = DDComponents.DischargeDeathModals;
+
+        if (!DischargeDeathStats || !DischargeDeathForm || !DischargeDeathPendingList || !DischargeDeathModals) {
+            return React.createElement('div', { className: 'p-10 text-rose-500 font-mono' }, 'Erro: Componentes de Alta/Óbito não carregados.');
+        }
+
+        var dropdownMenu = showMenu && React.createElement(React.Fragment, null,
+            React.createElement('div', { className: 'nx-dropdown-overlay', onClick: function() { setShowMenu(false); } }),
+            React.createElement('div', { className: 'nx-dropdown-menu' },
+                React.createElement('button', {
+                    onClick: function() { setShowHistoryModal(true); setShowMenu(false); fetchHistory(); },
+                    className: 'nx-dropdown-btn'
+                },
+                    React.createElement('i', { className: 'ph-bold ph-clock-counter-clockwise text-cyan-500 text-lg' }),
+                    ' Ver Histórico '
+                )
+            )
+        );
+
+        return React.createElement('div', { className: 'nx-container !h-auto !overflow-visible px-10 pt-5 pb-24 animate-fade-in' },
+            React.createElement('div', { className: 'nx-header' },
+                React.createElement('div', { className: 'nx-header-title-group' },
+                    React.createElement('h1', { className: 'nx-header-title' }, 'Alta / Óbito'),
+                    React.createElement('p', { className: 'nx-header-subtitle' },
+                        'Saídas e Transferências Internas ',
+                        isOptimistic && React.createElement('span', { className: 'nx-sync-indicator' }, 'SINCRONIZANDO...')
+                    )
+                ),
+                React.createElement('div', { className: 'flex items-center gap-4' },
+                    React.createElement('div', { className: 'relative' },
+                        React.createElement('button', { onClick: function() { setShowMenu(!showMenu); }, className: 'nx-header-btn group' },
+                            React.createElement('i', { className: 'ph-bold ph-list text-2xl group-hover:scale-110 transition-transform' })
+                        ),
+                        dropdownMenu
+                    )
+                )
+            ),
+            React.createElement('div', { className: 'nx-header-divider' }),
+            React.createElement('div', null,
+                React.createElement(DischargeDeathStats, { stats: stats }),
+                React.createElement('div', { className: 'grid grid-cols-1 lg:grid-cols-2 gap-8 items-start h-full' },
+                    React.createElement('div', { className: 'lg:col-span-1' },
+                        React.createElement(DischargeDeathForm, {
+                            formData: formData, setFormData: setFormData, handleAttendanceSearch: handleAttendanceSearch,
+                            isPatientFound: isPatientFound, isPendingEdit: isPendingEdit,
+                            INSURANCE_OPTIONS: INSURANCE_OPTIONS, REASON_OPTIONS: REASON_OPTIONS,
+                            SPECIALTY_OPTIONS: SPECIALTY_OPTIONS, SECTOR_MACRO_OPTIONS: SECTOR_MACRO_OPTIONS,
+                            targetSector: targetSector, setTargetSector: setTargetSector,
+                            availableBedsOptions: availableBedsOptions, RELEASED_OPTIONS: RELEASED_OPTIONS,
+                            isSubmitting: isSubmitting, submit: submit, handleSubmit: handleSubmit,
+                            getInitialFormState: getInitialFormState, setIsPatientFound: setIsPatientFound,
+                            setIsPendingEdit: setIsPendingEdit
+                        })
+                    ),
+                    React.createElement('div', { className: 'lg:col-span-1 h-full' },
+                        React.createElement(DischargeDeathPendingList, {
+                            incompleteRecords: incompleteRecords, setFormData: setFormData,
+                            setIsPatientFound: setIsPatientFound, setIsPendingEdit: setIsPendingEdit
+                        })
+                    )
+                ),
+                React.createElement(DischargeDeathModals, {
+                    showHistoryModal: showHistoryModal, setShowHistoryModal: setShowHistoryModal,
+                    historyFilters: historyFilters, setHistoryFilters: setHistoryFilters,
+                    INSURANCE_OPTIONS: INSURANCE_OPTIONS, fetchHistory: fetchHistory,
+                    isLoadingHistory: isLoadingHistory, filteredModalData: filteredModalData
+                })
+            )
+        );
+    };
+
+    window.App.DischargeDeath = DischargeDeath;
+  })();
+</script>

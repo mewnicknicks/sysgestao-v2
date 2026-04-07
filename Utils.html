@@ -1,0 +1,272 @@
+
+<script>
+  (function() {
+    window.App = window.App || {};
+
+    const Utils = {
+        // --- 0. DEPENDENCY & READY CHECK ---
+        isReady: () => {
+            const required = ['UI', 'Context', 'Hooks', 'Constants', 'Service', 'Utils'];
+            const missing = required.filter(key => !window.App[key]);
+            if (missing.length > 0) {
+                console.warn("[Utils] Missing dependencies:", missing);
+                return false;
+            }
+            return true;
+        },
+
+        // --- ADAPTER V8 (HÍBRIDO: ARRAY OU OBJETO) ---
+        StructureAdapter: {
+            normalizeConfig: (jsonStr) => {
+                try { return typeof jsonStr === 'object' ? jsonStr : JSON.parse(jsonStr || '{}'); } 
+                catch (e) { return {}; }
+            },
+            toObject: (item) => {
+                if (!item) return null;
+                let raw = {};
+                let configStr = '{}';
+                if (Array.isArray(item)) {
+                    // ARRAY: [ORDEM, ID, TIPO, SETOR, MACRO, CATEGORIA, JSON_STR, LABEL] (Legacy Compression)
+                    // Note: Code.gs currently returns objects, so this block is for legacy support or if compression is re-enabled.
+                    // If CARACTERISTICAS was added to array output it would need an index update here.
+                    raw = { id: String(item[0]), category: item[1], type: item[2], sector: item[3], macro: item[4], order: parseInt(item[5] || 999), label: item[6], json: item[7] };
+                    configStr = item[7];
+                } 
+                else {
+                    // OBJECT (Standard from DB.findAll)
+                    raw = { 
+                        id: String(item.ID || item.id || item.number || ''), 
+                        category: item.CATEGORIA || item.category, 
+                        type: item.TIPO || item.type, 
+                        sector: item.SETOR || item.sector, 
+                        macro: item.MACRO_SETOR || item.macro || item.MACRO || item.sectorGlobal, 
+                        order: parseInt(item.ORDEM || item.order || 999), 
+                        label: item.LABEL || item.label || item.ID || item.id || item.number, 
+                        json: item.JSON_DADOS || item.json_dados || item.JSON || '{}',
+                        characteristics: item.CARACTERISTICAS || item.characteristics || '' // NEW FIELD
+                    };
+                    configStr = raw.json;
+                }
+                const config = Utils.StructureAdapter.normalizeConfig(configStr);
+                const finalNumber = (raw.label !== undefined && raw.label !== null && String(raw.label).trim() !== '') ? String(raw.label) : String(raw.id);
+                const finalSector = (raw.sector && String(raw.sector).trim() !== '') ? String(raw.sector).trim() : 'A DEFINIR';
+                return {
+                    id: raw.id || finalNumber, 
+                    category: raw.category || 'LEITO', 
+                    type: raw.type || 'UI',
+                    sector: finalSector,
+                    macro: raw.macro || 'GERAL',
+                    order: isNaN(raw.order) ? 999 : raw.order,
+                    number: finalNumber,
+                    sla: config.sla_min || 120,
+                    isStrategic: !!config.is_strategic,
+                    isCti: !!config.is_cti,
+                    acceptedInsurances: config.accepted_insurances || 'TODOS',
+                    characteristics: raw.characteristics || '',
+                    _rawJson: configStr
+                };
+            }
+        },
+
+        // --- 1. FORMATADORES E DADOS ---
+        normalize: (str) => {
+            if (str === undefined || str === null) return 'INDEFINIDO';
+            // V8.9: Mantém espaços para legibilidade, remove acentos e caracteres especiais
+            // Usando literal de espaço e hífen no final para evitar problemas de range ou escape
+            return String(str).toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Z0-9 \-_]/g, "").trim();
+        },
+        
+        safeInt: (val) => { const n = parseInt(val, 10); return isNaN(n) ? 0 : n; },
+
+        getStatusColor: (status) => {
+            const s = String(status || '').toUpperCase();
+            if (s.includes('OCUPADO')) return 'rose';
+            if (s.includes('LIVRE') || s.includes('VAGO')) return 'emerald';
+            if (s.includes('BLOQUEADO')) return 'amber';
+            if (s.includes('ALTA')) return 'blue';
+            return 'slate';
+        },
+
+        generateId: (prefix='id') => `${prefix}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+
+        formatDateBr: (dateVal) => {
+            if (!dateVal) return '-';
+            try {
+                const dateStr = String(dateVal);
+                if (dateStr.match(/^\d{4}-\d{2}-\d{2}/)) {
+                    const parts = dateStr.split('T')[0].split('-');
+                    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+                }
+                const dateObj = new Date(dateVal);
+                if (!isNaN(dateObj.getTime())) {
+                    return dateObj.toLocaleDateString('pt-BR', { timeZone: 'UTC' });
+                }
+                return dateVal;
+            } catch (e) { return dateVal; }
+        },
+
+        getBedMetadata: (bedNumber, structure) => {
+            if (!bedNumber || !structure || !structure.beds) return { sector: 'N/D', type: 'UI' };
+            const normBed = Utils.normalize(bedNumber);
+            const foundBed = structure.beds.find(b => Utils.normalize(b.number) === normBed);
+            if (foundBed) return foundBed;
+            return { sector: 'A DEFINIR', type: 'UI' };
+        },
+
+        getDurationInfo: (patient, refTime = new Date()) => {
+            if (!patient || (!patient.date && !patient.createdAt)) return { duration: '-', alertLevel: 'NONE', diffMins: 0 };
+            try {
+                let dateStr, timeStr = '00:00';
+                if (patient.date) {
+                    dateStr = patient.date.includes('T') ? patient.date.split('T')[0] : patient.date;
+                    timeStr = patient.time || '00:00';
+                } else if (patient.createdAt) {
+                    const isoDate = new Date(patient.createdAt);
+                    dateStr = isoDate.toISOString().split('T')[0];
+                    timeStr = `${isoDate.getHours().toString().padStart(2, '0')}:${isoDate.getMinutes().toString().padStart(2, '0')}`;
+                } else {
+                    return { duration: '-', alertLevel: 'NONE', diffMins: 0 };
+                }
+
+                let entry = new Date(`${dateStr}T${timeStr}`);
+                let diffMins = Math.floor((refTime - entry) / 60000);
+                if (diffMins < 0 && diffMins > -1500) { 
+                    entry = new Date(entry.getTime() - 24 * 60 * 60 * 1000); 
+                    diffMins = Math.floor((refTime - entry) / 60000);
+                }
+                if (isNaN(entry.getTime())) { return { duration: 'Erro', alertLevel: 'NONE', diffMins: 0 }; }
+                
+                const hours = Math.floor(diffMins / 60);
+                const mins = diffMins % 60;
+                const duration = `${hours}h ${mins}m`;
+                let alertLevel = 'NONE';
+                if (diffMins >= 720) alertLevel = 'CRITICAL'; 
+                else if (diffMins >= 360) alertLevel = 'WARNING'; 
+                return { duration, alertLevel, diffMins };
+            } catch (e) {
+                return { duration: 'Erro', alertLevel: 'NONE', diffMins: 0 };
+            }
+        },
+
+        handleEnterNavigation: (e) => {
+            if (e.key === 'Enter') {
+                const target = e.target;
+                if (target.tagName === 'TEXTAREA' || target.type === 'submit') return;
+                e.preventDefault();
+                
+                // Robust form detection: try currentTarget (listener), then target.form, then closest
+                let form = e.currentTarget;
+                if (!form || form.tagName !== 'FORM') {
+                    form = target.form || target.closest('form');
+                }
+                
+                if (!form) return;
+
+                const selector = 'input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), button[type="submit"]:not([disabled])';
+                const elements = Array.from(form.querySelectorAll(selector));
+                const index = elements.indexOf(target);
+                if (index > -1 && index < elements.length - 1) {
+                    elements[index + 1].focus();
+                }
+            }
+        },
+        
+        generateWhatsAppReport: (stats, user) => {
+            if (!stats || !stats.classes) return 'Sem dados para relatório.';
+            const now = new Date();
+            let t = `🏥 *CENÁRIO GLOBAL* - ${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})}\n`;
+            t += `👤 Gestor: ${user && user.name ? user.name.split(' ')[0].toUpperCase() : 'PLANTÃO'}\n`;
+            t += `──────────────────────\n\n`;
+            const sortedClasses = Object.values(stats.classes).sort((a,b) => (a.order || 99) - (b.order || 99));
+            sortedClasses.forEach(c => {
+                if (c.capacity === 0) return;
+                const icon = c.balance < 0 ? '🔴' : '🟢';
+                const divSign = c.divergence > 0 ? '+' : '';
+                const divText = c.divergence !== 0 ? ` (Simul: ${divSign}${c.divergence})` : '';
+                t += `*${(c.label || c.id).toUpperCase()}*\n`;
+                t += `🛏️ Ocup: ${c.occupied}/${c.capacity} | Bloq: ${c.blocked}\n`;
+                t += `✅ Vagos: ${c.free} ${divText}\n`;
+                t += `🔄 Saldo: *${c.balance}* ${icon}\n`;
+                t += `\n`;
+            });
+            t += `📊 *OCUPAÇÃO GERAL: ${stats.indicators.occupancyRate || 0}%*\n`;
+            t += `⏳ *FILA P.A.: ${stats.indicators.paWaiting || 0} PACIENTES*`;
+            return t;
+        },
+
+        // --- 2. BUSINESS LOGIC (EXTRACTED FROM COMPONENTS) ---
+        calculatePatientStats: (localPatients, strategicList = []) => {
+            const todayISO = new Date().toISOString().split('T')[0];
+            
+            const isActive = (p) => !['SIM','ALTA','OBITO'].includes(String(p.dischargeStatus).toUpperCase());
+            const isToday = (p) => (p.createdAt || '').startsWith(todayISO);
+            const hasBed = (p) => !!p.bed;
+            const isWaiting = (p) => !p.bed && isActive(p);
+            const isStrategic = (p) => strategicList.includes((p.insurance || '').toUpperCase());
+
+            const activeList = localPatients.filter(isActive);
+            const todayList = localPatients.filter(isToday);
+
+            return {
+                registros: { hoje: todayList.length, total: activeList.length },
+                alocados: { hoje: todayList.filter(hasBed).length, total: activeList.filter(hasBed).length },
+                fila: { hoje: todayList.filter(isWaiting).length, total: activeList.filter(isWaiting).length },
+                prioridade: { hoje: todayList.filter(p => isWaiting(p) && p.priority).length, total: activeList.filter(p => isWaiting(p) && p.priority).length },
+                estrategicos: { hoje: todayList.filter(isStrategic).length, total: activeList.filter(isStrategic).length },
+                standard: { hoje: todayList.filter(p => !isStrategic(p)).length, total: activeList.filter(p => !isStrategic(p)).length }
+            };
+        },
+
+        calculatePaStats: (patients, currentTime, sectors = []) => {
+            const counts = { total: patients.length, critical: 0, warning: 0, ui: 0, cti: 0 };
+            const normalize = (str) => String(str || '').toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Z0-9 \-_]/g, "").trim();
+            
+            patients.forEach(p => {
+                const info = Utils.getDurationInfo(p, currentTime);
+                if (info.alertLevel === 'CRITICAL') counts.critical++;
+                if (info.alertLevel === 'WARNING') counts.warning++;
+                
+                const meta = sectors.find(s => normalize(s.name) === normalize(p.sector));
+                if (meta) {
+                    const type = String(meta.type || '').toUpperCase();
+                    if (['CTI','UTI','CETIPE'].some(k => type.includes(k))) counts.cti++;
+                    else counts.ui++;
+                }
+            });
+            return counts;
+        },
+
+        // --- 3. EXPORTAÇÃO ---
+        downloadCSV: (data, filename) => {
+            if (!data || !data.length) return;
+            const separator = ',';
+            const keys = Object.keys(data[0]);
+            const csvContent = [
+                keys.join(separator),
+                ...data.map(row => keys.map(k => {
+                    let cell = row[k] === null || row[k] === undefined ? '' : row[k];
+                    cell = cell instanceof Date ? cell.toISOString() : String(cell);
+                    cell = cell.replace(/"/g, '""');
+                    if (cell.search(/("|,|\n)/g) >= 0) cell = `"${cell}"`;
+                    return cell;
+                }).join(separator))
+            ].join('\n');
+
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            if (link.download !== undefined) {
+                const url = URL.createObjectURL(blob);
+                link.setAttribute('href', url);
+                link.setAttribute('download', filename);
+                link.style.visibility = 'hidden';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            }
+        }
+    };
+
+    window.App.Utils = Object.assign(window.App.Utils || {}, Utils);
+    console.log("[Utils.html] Utils initialized:", Object.keys(window.App.Utils));
+  })();
+</script>

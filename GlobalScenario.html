@@ -1,0 +1,247 @@
+
+<script>
+  (function() {
+    window.App = window.App || {};
+
+    var useState = React.useState;
+    var useEffect = React.useEffect;
+    var useMemo = React.useMemo;
+    
+    // --- SAFE CHART COMPONENT WRAPPER ---
+    var SafeChart = function(props) {
+        var Component = props.component;
+        var fallbackLabel = props.fallbackLabel;
+        if (!Component) {
+            return React.createElement('div', { className: 'nx-gs-chart-fallback' },
+                React.createElement('span', null, fallbackLabel || "Grafico Indisponivel")
+            );
+        }
+        return React.createElement(Component, props);
+    };
+
+    var GlobalScenario = function() {
+        // --- CONTEXT CONSUMER ---
+        var ctx = window.App.Context.useAppContext();
+        var user = ctx.user;
+        var structure = ctx.structure;
+        var patientsList = ctx.patientsList;
+        var blockedBedsList = ctx.blockedBedsList;
+        var paList = ctx.paList;
+        var dischargeList = ctx.dischargeList;
+        var transferList = ctx.transferList;
+        var preloadedForecast = ctx.preloadedForecast;
+        var globalTime = ctx.globalTime;
+
+        var UI = window.App.UI || {};
+        var Charts = window.App.Charts || {}; 
+        var News = window.App.News || {};
+        var Intelligence = window.App.Intelligence || {};
+
+        // --- STATE & TIMER ---
+        var infoTickState = useState(0);
+        var infoTick = infoTickState[0];
+        var setInfoTick = infoTickState[1];
+        
+        // --- UI STATE ---
+        var showMenuState = useState(false);
+        var showMenu = showMenuState[0];
+        var setShowMenu = showMenuState[1];
+
+        var showWppModalState = useState(false);
+        var showWppModal = showWppModalState[0];
+        var setShowWppModal = showWppModalState[1];
+        
+        // --- RESPONSIVE STATE ---
+        var isMobileState = useState(window.innerWidth < 1024);
+        var isMobile = isMobileState[0];
+        var setIsMobile = isMobileState[1];
+
+        // --- TOAST STATE ---
+        var toastState = useState({ show: false, message: '', type: 'success' });
+        var toast = toastState[0];
+        var setToast = toastState[1];
+        
+        // --- TIMERS & RESIZE ---
+        useEffect(function() {
+            var l = setInterval(function() { setInfoTick(function(prev) { return prev + 1; }); }, 5000); 
+            var handleResize = function() { setIsMobile(window.innerWidth < 1024); };
+            window.addEventListener('resize', handleResize);
+            return function() { 
+                clearInterval(l); 
+                window.removeEventListener('resize', handleResize);
+            };
+        }, []);
+
+        // --- DEBUG: Log component availability once ---
+        useEffect(function() {
+            if (window.App.DEBUG) {
+                console.log('[GlobalScenario] Componentes disponiveis:', {
+                    ScenarioInflow: !!window.App.ScenarioInflow,
+                    ScenarioCarousel: !!window.App.ScenarioCarousel,
+                    ScenarioCapacity: !!window.App.ScenarioCapacity,
+                    ScenarioTicker: !!window.App.ScenarioTicker,
+                    Intelligence: !!Intelligence.processHospitalState,
+                    Charts: Object.keys(Charts).length
+                });
+            }
+            // Retry inflow se nao carregou (defensive)
+            if (!window.App.ScenarioInflow && window.App._ScenarioInflowFn) {
+                window.App.ScenarioInflow = window.App._ScenarioInflowFn;
+                console.log('[GlobalScenario] ScenarioInflow recuperado do fallback.');
+            }
+        }, []);
+
+        // --- INTELLIGENCE ENGINE (V8) ---
+        var data = useMemo(function() {
+            var todayISO = new Date().toLocaleDateString('en-CA');
+            var forecastData = preloadedForecast ? (preloadedForecast[todayISO] || {}) : {};
+
+            return Intelligence.processHospitalState ? Intelligence.processHospitalState({
+                structure: structure || { sectors: [], beds: [] },
+                patientsList: patientsList || [],
+                blockedBedsList: blockedBedsList || [],
+                paList: paList || [],
+                dischargeList: dischargeList || [],
+                transferList: transferList || [],
+                preloadedForecast: forecastData 
+            }) : null;
+        }, [structure, patientsList, blockedBedsList, paList, dischargeList, transferList, preloadedForecast, Intelligence]);
+
+        // --- AGREGADORES DINAMICOS ---
+        var uiCombined = useMemo(function() {
+            if (!data || !data.stats || !data.stats.classes) return { occupied: 0, total: 0, free: 0 };
+            var cls = data.stats.classes;
+            var tags = window.App.Constants.TAGS.INTENSIVE_CARE || [];
+            var keys = Object.keys(cls).filter(function(k) { return !tags.some(function(tag) { return k.includes(tag); }); });
+            return keys.reduce(function(acc, k) {
+                return {
+                    occupied: acc.occupied + (cls[k].occupied || 0),
+                    total: acc.total + (cls[k].capacity || 0), 
+                    free: acc.free + (cls[k].free || 0)
+                };
+            }, { occupied: 0, total: 0, free: 0 });
+        }, [data]);
+
+        var ctiAdultoCombined = useMemo(function() {
+            if (!data || !data.stats || !data.stats.classes) return { occupied: 0, total: 0, free: 0 };
+            var cls = data.stats.classes;
+            var tags = window.App.Constants.TAGS.INTENSIVE_CARE || [];
+            var keys = Object.keys(cls).filter(function(k) { return tags.some(function(tag) { return k.includes(tag); }); });
+            return keys.reduce(function(acc, k) {
+                return {
+                    occupied: acc.occupied + (cls[k].occupied || 0),
+                    total: acc.total + (cls[k].capacity || 0),
+                    free: acc.free + (cls[k].free || 0)
+                };
+            }, { occupied: 0, total: 0, free: 0 });
+        }, [data]);
+
+        var filteredCtiBoxes = useMemo(function() {
+            return (data && data.charts && data.charts.ctiSectorData) || [];
+        }, [data]);
+
+        // --- TICKER DATA ---
+        var tickerItems = useMemo(function() {
+            if (News && News.generateTicker) {
+                return News.generateTicker(data, patientsList, blockedBedsList, paList);
+            }
+            return ["SISTEMA ONLINE - CARREGANDO..."];
+        }, [data, patientsList, blockedBedsList, paList, News]);
+
+        // --- AÇÃO DE COPIAR ---
+        var handleCopyAndSend = function() {
+            var text = window.App.Templates ? window.App.Templates.globalScenario(data, user) : "Erro: Template nao encontrado.";
+            navigator.clipboard.writeText(text);
+            
+            setToast({ show: true, message: 'Relatorio copiado!', type: 'success' });
+            setTimeout(function() { setToast({ show: false, message: '', type: 'success' }); }, 3000);
+            
+            setShowWppModal(false);
+        };
+
+        if (!data) {
+            return React.createElement('div', { className: 'nx-gs-loading' },
+                React.createElement('i', { className: 'ph-bold ph-circle-notch' })
+            );
+        }
+
+        var now = globalTime || new Date();
+
+        // --- RESOLVE SUB-COMPONENTS ---
+        var ScenarioInflow = window.App.ScenarioInflow;
+        var ScenarioCarousel = window.App.ScenarioCarousel;
+        var ScenarioCapacity = window.App.ScenarioCapacity;
+        var ScenarioTicker = window.App.ScenarioTicker;
+
+        // --- RENDER ---
+        var gridChildren = [
+            ScenarioInflow
+                ? React.createElement(ScenarioInflow, { data: data, infoTick: infoTick })
+                : React.createElement('div', { className: 'nx-gs-chart-fallback', style: { borderColor: '#9f1239' } }, React.createElement('span', null, "Erro: Inflow nao carregou")),
+            ScenarioCarousel
+                ? React.createElement(ScenarioCarousel, { data: data, uiCombined: uiCombined, ctiAdultoCombined: ctiAdultoCombined, filteredCtiBoxes: filteredCtiBoxes, isMobile: isMobile })
+                : React.createElement('div', { className: 'nx-gs-chart-fallback', style: { borderColor: '#9f1239' } }, React.createElement('span', null, "Erro: Carousel nao carregou")),
+            ScenarioCapacity
+                ? React.createElement(ScenarioCapacity, { data: data, filteredCtiBoxes: filteredCtiBoxes })
+                : React.createElement('div', { className: 'nx-gs-chart-fallback', style: { borderColor: '#9f1239' } }, React.createElement('span', null, "Erro: Capacity nao carregou"))
+        ];
+
+        return React.createElement('div', { className: 'nx-gs-container' },
+            React.createElement(UI.Toast, { show: toast.show, message: toast.message, type: toast.type }),
+            React.createElement('div', { className: 'nx-gs-gradient-line' }),
+            React.createElement('div', { className: 'nx-gs-body' },
+                // --- HEADER ---
+                React.createElement('div', { className: 'nx-header' },
+                    React.createElement('div', null,
+                        React.createElement('h1', { className: 'nx-header-title' }, "Cenario Global"),
+                        React.createElement('p', { className: 'nx-header-subtitle' }, "Operacao em Tempo Real")
+                    ),
+                    React.createElement('div', { className: 'nx-gs-header-actions' },
+                        React.createElement('div', { className: 'nx-gs-clock-wrap' },
+                            React.createElement('div', { className: 'nx-gs-clock font-mono-nums' },
+                                now.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})
+                            ),
+                            React.createElement('div', { className: 'nx-gs-date' }, now.toLocaleDateString())
+                        ),
+                        React.createElement('div', { style: { position: 'relative' } },
+                            React.createElement('button', { onClick: function() { setShowMenu(!showMenu); }, className: 'nx-header-btn' },
+                                React.createElement('i', { className: 'ph-bold ph-list', style: { fontSize: '1.5rem' } })
+                            ),
+                            showMenu && React.createElement(React.Fragment, null,
+                                React.createElement('div', { style: { position: 'fixed', inset: 0, zIndex: 40 }, onClick: function() { setShowMenu(false); } }),
+                                React.createElement('div', { className: 'nx-dropdown-menu' },
+                                    React.createElement('button', { onClick: function() { setShowWppModal(true); setShowMenu(false); }, className: 'nx-dropdown-btn' },
+                                        React.createElement('i', { className: 'ph-bold ph-whatsapp-logo nx-gs-c-emerald', style: { fontSize: '1.125rem' } }),
+                                        " Relatorio WhatsApp"
+                                    )
+                                )
+                            )
+                        )
+                    )
+                ),
+                React.createElement('div', { className: 'nx-header-divider' }),
+
+                // --- 3-COLUMN GRID ---
+                React.createElement('div', { className: 'nx-gs-grid' }, gridChildren[0], gridChildren[1], gridChildren[2])
+            ),
+            ScenarioTicker
+                ? React.createElement(ScenarioTicker, { tickerItems: tickerItems })
+                : React.createElement('div', { className: 'nx-gs-ticker' }, 
+                    React.createElement('div', { className: 'nx-gs-ticker-badge' }, React.createElement('span', { className: 'nx-gs-ticker-badge-text' }, "ERRO")), 
+                    React.createElement('div', { className: 'nx-gs-ticker-track' }, "Ticker nao carregado")
+                  ),
+
+            // --- WHATSAPP MODAL ---
+            showWppModal && UI.PhonePreview && React.createElement(UI.Modal, { isOpen: true, onClose: function() { setShowWppModal(false); }, variant: "transparent", className: "nx-gs-modal-container" },
+                React.createElement(UI.PhonePreview, {
+                    reportText: window.App.Templates ? window.App.Templates.globalScenario(data, user) : "Carregando...",
+                    onCopy: handleCopyAndSend,
+                    onClose: function() { setShowWppModal(false); }
+                })
+            )
+        );
+    };
+
+    window.App.GlobalScenario = GlobalScenario;
+  })();
+</script>

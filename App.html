@@ -1,0 +1,515 @@
+
+<script>
+  (function() {
+    window.App = window.App || {};
+    
+    try {
+        const { useState, useEffect, useMemo, useCallback, useRef } = React;
+        const AppContext = window.App.Context.AppContext;
+        const { useAppActions, useCache } = window.App.Hooks;
+
+        // --- BOOT COMPONENTS ---
+
+        const ErrorScreen = ({ errorMsg, onRetry, onLogout }) => React.createElement('div', { className: 'nx-error-screen' },
+            React.createElement('i', { className: 'ph-bold ph-warning-octagon nx-error-icon' }),
+            React.createElement('h1', { className: 'nx-error-title' }, 'Erro de Sistema'),
+            React.createElement('div', { className: 'nx-error-box' },
+                React.createElement('p', { className: 'nx-error-text' }, errorMsg)
+            ),
+            React.createElement('div', { className: 'nx-error-actions' },
+                React.createElement('button', { onClick: onRetry, className: 'btn-action-confirm' }, 'Recarregar'),
+                React.createElement('button', { onClick: onLogout, className: 'btn-action-cancel' }, 'Sair / Limpar')
+            )
+        );
+
+        const LoadingScreen = ({ user, showOptions, onRetry, onLogout }) => {
+            const getGreeting = () => {
+                const h = new Date().getHours();
+                if (h < 12) return 'BOM DIA';
+                if (h < 18) return 'BOA TARDE';
+                return 'BOA NOITE';
+            };
+            const userName = user && user.name ? user.name.split(' ')[0].toUpperCase() : 'USUÁRIO';
+
+            return React.createElement('div', { className: 'nx-loading-screen' },
+                React.createElement('div', { className: 'nx-loading-content' },
+                    React.createElement('div', { className: 'nx-loading-header' },
+                        React.createElement('h2', { className: 'nx-loading-title' },
+                            'OLÁ, ', React.createElement('span', { className: 'nx-loading-user' }, userName), '!'
+                        ),
+                        React.createElement('p', { className: 'nx-loading-greeting' }, getGreeting())
+                    ),
+                    React.createElement('div', { className: 'nx-loading-bar-container' },
+                        React.createElement('div', { className: 'nx-loading-bar' })
+                    ),
+                    React.createElement('div', { className: 'nx-loading-status' },
+                        'Sincronizando Banco de Dados...'
+                    ),
+                    showOptions && React.createElement('div', { className: 'nx-loading-options' },
+                        React.createElement('p', { className: 'nx-loading-options-title' }, 'Conexão lenta detectada'),
+                        React.createElement('button', { onClick: onRetry, className: 'btn-action-confirm', style: { width: '100%' } }, 'Tentar Novamente'),
+                        React.createElement('button', { onClick: onLogout, className: 'btn-action-cancel', style: { width: '100%' } }, 'Cancelar e Sair')
+                    )
+                ),
+                React.createElement('div', { className: 'nx-loading-bg' })
+            );
+        };
+
+        // --- ROUTER COMPONENT ---
+
+        const AppRouter = React.memo(({ activeView }) => {
+            const C = window.App || {};
+            const ActiveComponent = useMemo(() => ({ 
+                'GLOBAL': C.GlobalScenario, 'BED_MAP': C.BedMap, 'PATIENT_REGISTER': C.PatientRegister, 
+                'TRANSFER': C.Transfer, 'PA_CONTROL': C.PaControl, 'DISCHARGE_DEATH': C.DischargeDeath, 
+                'FORECAST': C.Forecast, 'SHIFT_HANDOVER': C.ShiftHandover, 'SETTINGS': C.Settings,
+                'AUDIT_LOG': C.AuditLog, 'REPORTS': C.Reports, 'DOCUMENT_EDITOR': C.DocumentEditor
+            }[activeView]), [activeView, C]);
+
+            if (!ActiveComponent) {
+                console.warn(`[AppRouter] View not found or not loaded: ${activeView}`);
+                return React.createElement('div', { className: 'nx-router-error' },
+                    React.createElement('i', { className: 'ph-bold ph-warning-octagon nx-router-error-icon' }),
+                    'Módulo "', activeView, '" não disponível ou em desenvolvimento'
+                );
+            }
+
+            return React.createElement(ActiveComponent);
+        });
+
+        // --- ERROR BOUNDARY ---
+        class ErrorBoundary extends React.Component {
+            constructor(props) {
+                super(props);
+                this.state = { hasError: false, error: null, errorInfo: null };
+            }
+            static getDerivedStateFromError(error) { return { hasError: true, error }; }
+            componentDidCatch(error, errorInfo) { 
+              window.App?.Logger?.error("Uncaught React Error:", { error, errorInfo }); 
+              this.setState({ errorInfo }); 
+            }
+            render() {
+                if (this.state.hasError) {
+                    return React.createElement('div', { className: 'nx-boundary-error' },
+                        React.createElement('i', { className: 'ph-bold ph-bug nx-boundary-icon' }),
+                        React.createElement('h1', { className: 'nx-boundary-title' }, 'Erro de Renderização'),
+                        React.createElement('div', { className: 'nx-boundary-box' },
+                            React.createElement('p', { className: 'nx-boundary-msg' }, this.state.error && this.state.error.toString()),
+                            React.createElement('pre', { className: 'nx-boundary-stack' }, this.state.errorInfo && this.state.errorInfo.componentStack)
+                        ),
+                        React.createElement('button', { onClick: () => window.location.reload(), className: 'btn-action-confirm', style: { marginTop: '1.5rem' } }, 'Recarregar Sistema')
+                    );
+                }
+                return this.props.children;
+            }
+        }
+
+        const MainApp = () => {
+          const Utils = window.App.Utils;
+          
+          // --- ESTADO GLOBAL ---
+          const [user, setUser] = useState(null);
+          const [bootState, setBootState] = useState('LOADING'); 
+          const [errorMsg, setErrorMsg] = useState('');
+          const [appData, setAppData] = useState({});
+          
+          // --- CHECK DEPENDÊNCIAS ---
+          const [depsReady, setDepsReady] = useState(false);
+          useEffect(() => {
+              const check = () => {
+                  if (Utils && Utils.isReady()) {
+                      setDepsReady(true);
+                  } else {
+                      setTimeout(check, 100);
+                  }
+              };
+              check();
+          }, [Utils]);
+
+          // --- RELÓGIO GLOBAL (1min) ---
+          const [globalTime, setGlobalTime] = useState(new Date());
+          const isSystemInitialized = useRef(false);
+
+          // --- HANDLE LOGOUT (declarado antes do useEffect que o usa) ---
+          const handleLogout = useCallback(() => {
+              window.App.safeStorage.removeItem('sysGestaoUser');
+              if (window.App && window.App.OfflineDB) {
+                  window.App.OfflineDB.clear().catch((e) => console.error(e));
+              }
+              setAppData({});
+              setPreFillData(null);
+              setSimulationState({});
+              isSystemInitialized.current = false;
+              setUser(null);
+              setBootState('IDLE');
+          }, []);
+
+          // --- TIMEOUT DE INATIVIDADE (10 min) ---
+          useEffect(() => {
+              if (!user) return;
+              const TIMEOUT_DURATION = 10 * 60 * 1000;
+              let timer;
+              const resetTimer = () => {
+                  clearTimeout(timer);
+                  timer = setTimeout(handleLogout, TIMEOUT_DURATION);
+              };
+              const events = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart'];
+              events.forEach(event => window.addEventListener(event, resetTimer));
+              resetTimer();
+              return () => {
+                  clearTimeout(timer);
+                  events.forEach(event => window.removeEventListener(event, resetTimer));
+              };
+          }, [user, handleLogout]);
+          useEffect(() => {
+              const timer = setInterval(() => setGlobalTime(new Date()), 60000);
+              return () => clearInterval(timer);
+          }, []);
+          
+          // --- ESTADO DE UI ---
+          const [activeView, setActiveView] = useState('GLOBAL');
+          const [preFillData, setPreFillData] = useState(null);
+          const [simulationState, setSimulationState] = useState({});
+          const [showLongLoadingOptions, setShowLongLoadingOptions] = useState(false);
+           const [netState, setNetState] = React.useState('IDLE');
+           window.App.setNetState = setNetState;
+
+          // --- NOTIFICAÇÕES ---
+          const [notifications, setNotifications] = useState([]);
+          const [unreadCount, setUnreadCount] = useState(0);
+
+          const fetchNotifications = useCallback(async () => {
+              if (!user) return;
+              try {
+                  const res = await window.App.Service.Notifications.getMine(user);
+                  if (res && res.success && res.data) {
+                      setNotifications(res.data);
+                      setUnreadCount(res.data.length);
+                  }
+              } catch (e) {
+                  console.warn("Erro ao buscar notificações:", e);
+              }
+          }, [user]);
+
+          useEffect(() => {
+              if (!user) return;
+              fetchNotifications();
+              const interval = setInterval(fetchNotifications, 60000); // Polling a cada 1 min
+              return () => clearInterval(interval);
+          }, [user, fetchNotifications]);
+
+          const markAsRead = useCallback(async (id) => {
+              try {
+                  const res = await window.App.Service.Notifications.markAsRead(id, user);
+                  if (res && res.success) {
+                      setNotifications(prev => prev.filter(n => n.id !== id));
+                      setUnreadCount(prev => Math.max(0, prev - 1));
+                  }
+              } catch (e) {
+                  console.error("Erro ao marcar como lida:", e);
+              }
+          }, [user]);
+
+          const notificationValue = useMemo(() => ({
+              notifications,
+              unreadCount,
+              fetchNotifications,
+              markAsRead
+          }), [notifications, unreadCount, fetchNotifications]);
+
+           useEffect(() => {
+                if (window.App.DEBUG) {
+                    console.log(`%cNet state changed to ${netState}`, `color: ${netState === 'BUSY' ? '#f59e0b' : '#a1a1aa'}`);
+                }
+           }, [netState]);
+          
+          // ✅ CACHE HOOK
+          const cache = useCache(30000);
+
+          // DEPENDÊNCIA: Service Layer
+          const Service = window.App.Service;
+
+          // --- INICIALIZAÇÃO ---
+          useEffect(() => {
+              const handleOnline = () => {
+                  if (window.App.Service && window.App.Service.syncOfflineActions) {
+                      window.App.Service.syncOfflineActions().then(() => initSystem(true));
+                  }
+              };
+              window.addEventListener('online', handleOnline);
+              
+              const stored = window.App.safeStorage.getItem('sysGestaoUser');
+              if (stored) {
+                  try { 
+                      setUser(JSON.parse(stored)); 
+                      initSystem(); 
+                  } 
+                  catch (e) { setUser(null); setBootState('IDLE'); }
+              } else {
+                  setBootState('IDLE');
+              }
+              
+              return () => window.removeEventListener('online', handleOnline);
+          }, []);
+
+          useEffect(() => {
+              let timer;
+              if (bootState === 'LOADING') {
+                  setShowLongLoadingOptions(false);
+                  timer = setTimeout(() => { setShowLongLoadingOptions(true); }, 8000);
+              }
+              return () => clearTimeout(timer);
+          }, [bootState]);
+
+          const initSystem = async (forceRefresh = false) => {
+              // ✅ CHECK CACHE PRIMEIRO
+              if (!forceRefresh && cache.isValid()) {
+                  setAppData(cache.cachedData);
+                  if (!isSystemInitialized.current) {
+                    setBootState('READY');
+                    isSystemInitialized.current = true;
+                  }
+                  return;
+              }
+              
+              if (!isSystemInitialized.current) setBootState('LOADING');
+              setErrorMsg('');
+              
+              try {
+                  const criticalRes = await Service.getCriticalData();
+                  if (criticalRes && criticalRes.success === false) throw new Error(criticalRes.message || "Erro no carregamento crítico.");
+                  
+                  let payload = (criticalRes && criticalRes.data) ? criticalRes.data : {};
+                  
+                  if (!payload || Object.keys(payload).length === 0) {
+                      payload = {
+                          systemInfo: { status: 'RECOVERY', dbName: 'Modo de Segurança' },
+                          structure: { sectors: [], beds: [], flows: [], classes: [], insurances: [], specialties: [] },
+                          patients: [], paList: [], blockedBeds: [], forecast: []
+                      };
+                  }
+
+                  if (payload.structure && Array.isArray(payload.structure.beds)) {
+                      payload.structure.beds = payload.structure.beds
+                          .map(row => Utils.StructureAdapter.toObject(row))
+                          .filter(b => b && b.number);
+                  }
+                  
+                  payload.structure = payload.structure || {};
+                  payload.structure.sectors = payload.structure.sectors || [];
+                  if (payload.structure.sectors.length === 0 && payload.structure.beds.length > 0) {
+                      const sectorMap = new Map();
+                      payload.structure.beds.forEach(bed => {
+                          const secName = bed.sector || 'A DEFINIR';
+                          if (!sectorMap.has(secName) && bed.category !== 'VIRTUAL' && bed.category !== 'FORECAST') {
+                              sectorMap.set(secName, { name: secName, type: bed.type || 'UI', order: bed.order || 999 });
+                          }
+                      });
+                      payload.structure.sectors = Array.from(sectorMap.values()).sort((a,b) => (a.order || 999) - (b.order || 999));
+                  }
+
+                  payload.patients = payload.patients || [];
+                  const forecastList = payload.forecast || [];
+                  const forecastMap = {};
+                  forecastList.forEach(f => { 
+                      const rawId = f.ID || f.id || f.date || '';
+                      const cleanId = String(rawId).split('T')[0]; 
+                      if (cleanId) forecastMap[cleanId] = f;
+                  });
+                  payload.forecastMap = forecastMap;
+                  
+                  setAppData(prev => ({ ...prev, ...payload }));
+                  window.App.STRUCTURE = payload.structure;
+                  window.App.INSURANCE_OPTIONS = payload.structure.insurances || [];
+                  if (payload.structure.doctorsCti) {
+                      window.App.Constants.REPORT_CTI_DOCTORS = payload.structure.doctorsCti;
+                  }
+                  
+                  // ✅ ATUALIZA CACHE
+                  cache.update(payload);
+                  
+                  setBootState('READY');
+                  isSystemInitialized.current = true;
+
+                  Service.getSecondaryData().then(secRes => {
+                      if (secRes && secRes.success !== false && secRes.data) {
+                          setAppData(prev => {
+                              const fullData = { ...prev, ...secRes.data };
+                              if(window.App.OfflineDB) {
+                                  window.App.OfflineDB.saveAll(fullData).catch(e => {
+                                    if (window.App?.Logger?.warn) window.App.Logger.warn("OfflineDB Sync failed (non-critical)", { error: e.message });
+                                  });
+                              }
+                              return fullData;
+                          });
+                      }
+                  }).catch(e => {
+                    if (window.App?.Logger?.warn) window.App.Logger.warn("Secondary data load failed (non-critical)", { error: e.message });
+                  });
+
+              } catch (e) {
+                  if (window.App?.Logger?.error) window.App.Logger.error("Boot initialization error:", { error: e.message });
+                  setErrorMsg(e.message || "Falha na conexão com o servidor.");
+                  setBootState('ERROR');
+              }
+          };
+
+          const handleLogin = async (matricula) => {
+              // --- EMERGENCY BACKDOOR ---
+              if (matricula === 'BIOCOR') {
+                  const emergencyUser = {
+                      id: 'admin-emergency',
+                      name: 'SUPORTE BIOCOR (ADM)',
+                      matricula: 'BIOCOR',
+                      role: 'ADMIN',
+                      isAdmin: true,
+                      nivel: 'ADMIN'
+                  };
+                  setUser(emergencyUser);
+                  window.App.safeStorage.setItem('sysGestaoUser', JSON.stringify(emergencyUser));
+                  initSystem();
+                  return;
+              }
+              // ---------------------------
+
+              try {
+                  const u = await Service.checkLogin(matricula);
+                  if (u) {
+                      setUser(u);
+                      window.App.safeStorage.setItem('sysGestaoUser', JSON.stringify(u));
+                      initSystem();
+                  } else {
+                      throw new Error("Matrícula não encontrada ou inativa.");
+                  }
+              } catch (e) { throw e; }
+          };
+
+          // --- ACTIONS MAP (Usando o novo Hook) ---
+          const actions = useAppActions(user, initSystem);
+
+          const onGlobalUpdate = useCallback((key, data) => {
+              setAppData(prev => ({ ...prev, [key]: data }));
+          }, []);
+
+          const handleTransferToRegister = useCallback((data) => {
+              setPreFillData(data);
+              setActiveView('PATIENT_REGISTER');
+          }, []);
+
+          const handleTransferToTransfer = useCallback((data) => {
+              setPreFillData({ ...data, source: 'PA_TRANSFER' });
+              setActiveView('TRANSFER');
+          }, []);
+
+          const reservationsList = useMemo(() => {
+              const transfers = appData.transfers || [];
+              return transfers
+                  .filter(t => t.status === 'ACEITO' && (!t.arrived || t.arrived === 'FALSE') && t.bed)
+                  .map(t => ({
+                      bed: t.bed,
+                      patientName: t.patient,
+                      origin: t.origin || (t.flow === 'ENTRADA' ? 'ADMISSÃO' : 'TRANSFERÊNCIA'),
+                      date: t.date,
+                      status: 'ACTIVE'
+                  }));
+          }, [appData.transfers]);
+
+          // --- CONTEXT VALUES (SPLIT) ---
+          const authValue = useMemo(() => ({
+              user,
+              handleLogout
+          }), [user, handleLogout]);
+
+          const uiValue = useMemo(() => ({
+              activeView,
+              setActiveView,
+              preFillData,
+              setPreFillData,
+              simulationState,
+              setSimulationState
+          }), [activeView, preFillData, simulationState]);
+
+          const dataValue = useMemo(() => ({
+              appData,
+              onGlobalUpdate,
+              structure: appData.structure || { sectors: [], beds: [] },
+              patientsList: appData.patients || [],
+              paList: appData.paList || [],
+              transferList: appData.transfers || [],
+              dischargeList: appData.discharges || [],
+              blockedBedsList: appData.blockedBeds || [],
+              usersList: appData.users || [],
+              restrictedList: appData.restrictedList || [],
+              rotationList: appData.rotationList || [],
+              reservationsList,
+              preloadedForecast: appData.forecastMap || {}
+          }), [appData, reservationsList]);
+
+          const systemValue = useMemo(() => ({
+              initSystem,
+              globalTime,
+              actions,
+              systemInfo: appData.systemInfo,
+              netState
+          }), [initSystem, globalTime, actions, appData.systemInfo, netState]);
+
+          // --- RENDERIZAÇÃO CONDICIONAL (BOOT) ---
+          
+          if (!depsReady) {
+              return React.createElement(LoadingScreen, { user: user, onRetry: () => window.location.reload(), onLogout: handleLogout });
+          }
+
+          if ((bootState === 'IDLE') && !user) {
+              const LoginComponent = window.App.Login;
+              return React.createElement(LoginComponent, { key: 'login-screen', onLoginAttempt: handleLogin });
+          }
+
+          if (bootState === 'ERROR') {
+              return React.createElement(ErrorScreen, { errorMsg: errorMsg, onRetry: () => initSystem(true), onLogout: handleLogout });
+          }
+
+          if (!user && bootState !== 'IDLE') {
+             const LoginComponent = window.App.Login;
+             return React.createElement(LoginComponent, { key: 'login-fallback', onLoginAttempt: handleLogin });
+          }
+          
+          if (bootState === 'LOADING') {
+              return React.createElement(LoadingScreen, { user: user, showOptions: showLongLoadingOptions, onRetry: () => window.location.reload(), onLogout: handleLogout });
+          }
+
+          const C = window.App || {};
+          const isDashboard = activeView === 'GLOBAL';
+          const containerClasses = isDashboard 
+            ? 'nx-view-container' 
+            : 'nx-view-container-scroll';
+
+          const { AuthContext, UIContext, DataContext, SystemContext, NotificationContext } = window.App.Context;
+
+          return React.createElement(AuthContext.Provider, { value: authValue },
+            React.createElement(UIContext.Provider, { value: uiValue },
+              React.createElement(DataContext.Provider, { value: dataValue },
+                React.createElement(SystemContext.Provider, { value: systemValue },
+                  React.createElement(NotificationContext.Provider, { value: notificationValue },
+                    React.createElement('div', { className: 'nx-app-layout' },
+                      C.Sidebar ? React.createElement(C.Sidebar) : null,
+                      React.createElement('main', { className: 'nx-app-main' },
+                        React.createElement('div', { className: containerClasses },
+                          React.createElement(ErrorBoundary, { key: activeView },
+                            React.createElement(AppRouter, { activeView: activeView })
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          );
+        };
+        window.App.MainApp = MainApp;
+    } catch (e) { 
+        console.error("Erro Fatal no Bootstrap:", e); 
+        document.body.innerHTML = `<div style="color:red;padding:20px;font-family:monospace;">Fatal Bootstrap Error: ${e.message}</div>`; 
+    }
+  })();
+</script>

@@ -1,0 +1,32 @@
+<script>
+  (function() {
+    window.App = window.App || {};
+
+    /**
+     * ErrorHandler System - Centraliza o tratamento de erros do sistema
+     * 
+     * Uso:
+     *   window.App.ErrorHandler.handle(error, context)
+     */
+    class ErrorHandler {
+      handle(error, context = 'General') {
+        // 1. Logar o erro usando o Logger centralizado
+        if (window.App.Logger) {
+          window.App.Logger.error(`[${context}] ${error.message || error}`, error);
+        } else {
+          console.error(`[${context}]`, error);
+        }
+
+        // 2. Notificar o usuário (UI)
+        // TODO: Integrar com componente de Toast ou Modal centralizado
+        // Por enquanto, usamos um alerta simples ou log na UI
+        if (window.App.UI && typeof window.App.UI.showError === 'function') {
+          window.App.UI.showError(context, error.message || 'Ocorreu um erro inesperado.');
+        }
+      }
+    }
+
+    // Singleton
+    window.App.ErrorHandler = new ErrorHandler();
+  })();
+</script>

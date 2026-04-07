@@ -1,0 +1,209 @@
+
+<script>
+  (function() {
+    window.App = window.App || {};
+
+    const API_TIMEOUT = 20000;  // ✅ REDUZIDO de 30s para 20s para forçar rejeição mais rápida
+    const MAX_RETRIES = 2;      // ✅ AUMENTADO de 0 para 2 tentativas
+    const RETRY_DELAY_MS = 1000;
+
+    const runBackend = async (funcName, ...args) => {
+        // ✅ OFFLINE SUPPORT: Se estiver offline e for uma ação de escrita, enfileira
+        const isWriteAction = !funcName.startsWith('get') && !funcName.startsWith('check') && !funcName.startsWith('diagnose');
+        
+        // Helper para log seguro
+        const safeLog = (level, msg, data) => {
+            if (window.App?.Logger && typeof window.App.Logger[level] === 'function') {
+                window.App.Logger[level](msg, data);
+            } else {
+                // Fallback para console se Logger falhar
+                const prefix = `[${level.toUpperCase()}]`;
+                if (level === 'error') console.error(prefix, msg, data || '');
+                else if (level === 'warn') console.warn(prefix, msg, data || '');
+                else if (level === 'info' || (level === 'debug' && window.App?.DEBUG)) console.log(prefix, msg, data || '');
+            }
+        };
+
+        if (!navigator.onLine && isWriteAction) {
+            if (window.App.OfflineDB) {
+                await window.App.OfflineDB.enqueueAction({ funcName, args });
+                safeLog('info', `Ação ${funcName} enfileirada para sincronização posterior (Offline).`);
+                return { success: true, offline: true, message: "Ação salva localmente. Será sincronizada quando houver internet." };
+            }
+        }
+
+        let attempt = 0;
+        let lastError = null;
+
+        while (attempt <= MAX_RETRIES) {
+            try {
+                return await new Promise((resolve, reject) => {
+                    const timer = setTimeout(() => {
+                        reject(new Error(`Timeout: Servidor demorou mais de ${API_TIMEOUT/1000}s para responder. Tente novamente.`));
+                    }, API_TIMEOUT);
+
+                    if (!google || !google.script) {
+                        clearTimeout(timer);
+                        reject(new Error("Ambiente Google Apps Script não detectado."));
+                        return;
+                    }
+
+                    google.script.run
+                        .withSuccessHandler((res) => {
+                            clearTimeout(timer);
+                            let data = res;
+                            if (typeof res === 'string') {
+                                try { data = JSON.parse(res); } 
+                                catch (e) { 
+                                  safeLog('warn', `API Parse Warning [${funcName}]`, { error: e.message });
+                                }
+                            }
+                            if (data && data.success === false) {
+                                reject(new Error(data.message || `Erro retornado pelo servidor em ${funcName}.`));
+                            } else {
+                                resolve(data);
+                            }
+                        })
+                        .withFailureHandler((err) => {
+                            clearTimeout(timer);
+                            reject(new Error(err.message || `Falha na chamada ${funcName}: ${err}`));
+                        })
+                        [funcName](...args);
+                });
+            } catch (err) {
+                window.App.ErrorHandler.handle(err, `Service.${funcName}`);
+                lastError = err;
+                attempt++;
+                
+                // Log useful for debugging (if DEBUG enabled)
+                safeLog('debug', `API Error [${funcName}] (Attempt ${attempt}/${MAX_RETRIES + 1}):`, { error: err.message });
+                
+                if (attempt > MAX_RETRIES) {
+                    // Failed after all retries
+                    throw lastError;
+                }
+                
+                // Wait before retry (with exponential backoff)
+                const delayMs = RETRY_DELAY_MS * Math.pow(2, attempt - 1);
+                await new Promise(r => setTimeout(r, delayMs)); 
+            }
+        }
+    };
+
+    window.App.Service = {
+        _version: "8.9.2",
+        run: runBackend,
+        
+        // --- SINCRONIZAÇÃO OFFLINE ---
+        syncOfflineActions: async () => {
+            if (!navigator.onLine || !window.App.OfflineDB) return;
+            
+            const queue = await window.App.OfflineDB.getActionsQueue();
+            if (queue.length === 0) return;
+            
+            if (window.App.Logger && typeof window.App.Logger.info === 'function') {
+                window.App.Logger.info(`Sincronizando ${queue.length} ações offline...`);
+            }
+            
+            for (const action of queue) {
+                try {
+                    // Executa a ação no backend ignorando o check de onLine interno do runBackend
+                    // Para isso, usamos o runBackend original mas garantimos que ele não re-enfileire
+                    const res = await runBackend(action.funcName, ...action.args);
+                    if (res && res.success !== false) {
+                        await window.App.OfflineDB.dequeueAction(action.id);
+                    }
+                } catch (e) {
+                    if (window.App.Logger && typeof window.App.Logger.error === 'function') {
+                        window.App.Logger.error(`Falha ao sincronizar ação offline ${action.funcName}:`, e);
+                    }
+                    // Mantém na fila para tentar depois
+                }
+            }
+        },
+        
+        // --- ROTAS OTIMIZADAS V8.9 ---
+        getCriticalData: () => runBackend('getCriticalData'),
+        getSecondaryData: () => runBackend('getSecondaryData'),
+        
+        checkLogin: (matricula) => runBackend('checkLogin', matricula),
+        diagnoseSystem: () => runBackend('diagnoseSystem'),
+        
+        // --- IA COM TIMEOUT MANUAL E CONTEXTO ---
+        // Agora aceita (prompt, contextKey, timeoutMs)
+        callGeminiAi: async (prompt, contextKey = null, timeoutMs = 30000) => {
+            // Se contextKey for número, é timeout (retrocompatibilidade)
+            if (typeof contextKey === 'number') { timeoutMs = contextKey; contextKey = null; }
+            
+            const apiCall = runBackend('callGeminiAi', prompt, contextKey);
+            const timeout = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error("A IA demorou muito para responder. Tente selecionar um trecho menor.")), timeoutMs)
+            );
+            // Corrida: Quem terminar primeiro ganha (API ou Timeout)
+            return Promise.race([apiCall, timeout]);
+        },
+
+        Patients: {
+            add: (p) => runBackend('addPatient', p),
+            update: (p) => runBackend('updatePatient', p),
+            delete: (id, user) => runBackend('deletePatient', id, user), 
+            saveAtomic: (data, isEdit, user) => runBackend('savePatientAtomic', data, isEdit, user) 
+        },
+
+        Beds: {
+            occupy: (pl, userPayload) => runBackend('addPatient', {id: Date.now(), name: 'OCUPADO', bed: pl.bed, sector: pl.sector, dischargeStatus:'NAO'}, userPayload),
+            block: (bed, reason, userMatricula, userPayload) => runBackend('addBlockedBed', bed, reason, userMatricula, userPayload),
+            unblock: (bed, userMatricula, userPayload) => runBackend('removeBlockedBed', bed, userMatricula, userPayload), 
+            saveStructure: (b, userPayload) => runBackend('saveStructureBed', b, userPayload),
+            deleteStructure: (n, userPayload) => runBackend('deleteStructureBed', n, userPayload)
+        },
+
+        Flows: {
+            addTransfer: (d, userPayload) => runBackend('addTransfer', d, userPayload),
+            updateTransfer: (t, userPayload) => runBackend('updateTransfer', t, userPayload),
+            deleteTransfer: (id, userPayload) => runBackend('deleteTransfer', id, userPayload),
+            
+            getTransferHistoryRange: (start, end) => runBackend('getTransferHistoryByRange', start, end),
+            getDischargeHistoryRange: (start, end) => runBackend('getDischargeHistoryByRange', start, end),
+            
+            processDischarge: (d, userPayload) => runBackend('processDischarge', d, userPayload),
+            dischargeWithCleaning: (rec, bed, userMatricula, userPayload) => runBackend('dischargeWithCleaning', rec, bed, userMatricula, userPayload),
+            executeInternalTransfer: (pid, ob, nb, ns, u, userPayload) => runBackend('executeInternalTransfer', pid, ob, nb, ns, u, userPayload),
+            finishExternalTransfer: (t, d, paId, u, userPayload) => runBackend('finishExternalTransfer', t, d, paId, u, userPayload)
+        },
+
+        Emergency: {
+            add: (p, userPayload) => runBackend('addPaPatient', p, userPayload),
+            update: (p, userPayload) => runBackend('updatePaPatient', p, userPayload),
+            delete: (id, userPayload) => runBackend('deletePaPatient', id, userPayload),
+            admit: (data, paId, userPayload) => runBackend('admitFromPa', data, paId, userPayload),
+            addRestricted: (p, userPayload) => runBackend('addRestrictedPatient', p, userPayload)
+        },
+
+        Notifications: {
+            getMine: (userPayload) => runBackend('getMyNotifications', userPayload),
+            create: (n, userPayload) => runBackend('createNotification', n, userPayload),
+            markAsRead: (id, userPayload) => runBackend('markNotificationAsRead', id, userPayload)
+        },
+
+        Admin: {
+            saveForecast: (d, userPayload) => runBackend('saveDailyForecast', d, userPayload),
+            saveUser: (u, userPayload) => runBackend('saveUser', u, userPayload),
+            deleteUser: (id, userPayload) => runBackend('deleteUser', id, userPayload),
+            saveSectorOrder: (n, o, userPayload) => runBackend('saveSectorOrder', n, o, userPayload),
+            deleteSector: (n, userPayload) => runBackend('deleteSector', n, userPayload),
+            renameSector: (o, n, userPayload) => runBackend('renameSector', o, n, userPayload),
+            saveInsurance: (i, userPayload) => runBackend('saveInsurance', i, userPayload),
+            deleteInsurance: (n, userPayload) => runBackend('deleteInsurance', n, userPayload),
+            saveSpecialty: (s, userPayload) => runBackend('saveSpecialty', s, userPayload),
+            deleteSpecialty: (n, userPayload) => runBackend('deleteSpecialty', n, userPayload),
+            getAuditLogs: (limit, start, end) => runBackend('getAuditLogs', limit, start, end),
+            addRotationMember: (data, userPayload) => runBackend('addRotationMember', data, userPayload),
+            deleteRotationMember: (id, userPayload) => runBackend('deleteRotationMember', id, userPayload),
+            saveAiConfig: (key, value, userPayload) => runBackend('saveAiConfig', key, value, userPayload),
+            factoryReset: (userPayload) => runBackend('adminFactoryReset', userPayload) // NOVA ROTA DE RESET
+        }
+    };
+    console.log("[Service.html] Service initialized");
+  })();
+</script>

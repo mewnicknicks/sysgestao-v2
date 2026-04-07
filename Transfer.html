@@ -1,0 +1,453 @@
+
+<script>
+  (function() {
+    window.App = window.App || {};
+
+    var Transfer = function(props) {
+      var onTransferToRegister = props.onTransferToRegister;
+      var preFillData = props.preFillData;
+      var onClearPreFill = props.onClearPreFill;
+      
+      var ctx = window.App.Context.useAppContext();
+      var user = ctx.user;
+      var propTransferList = ctx.transferList;
+      var paList = ctx.paList;
+      var dischargeList = ctx.dischargeList;
+      var structure = ctx.structure;
+      var patientsList = ctx.patientsList;
+      var blockedBedsList = ctx.blockedBedsList;
+      var actions = ctx.actions;
+      var onGlobalUpdate = ctx.onGlobalUpdate;
+
+      var notifications = window.App.Context.useNotifications();
+      var createNotification = notifications.createNotification || function() {};
+
+      var UI = window.App.UI || {};
+      var Utils = window.App.Utils || {};
+      var Service = window.App.Service;
+      var HospitalLogo = window.HospitalLogo;
+      var Recharts = window.Recharts || {};
+      var PieChart = Recharts.PieChart;
+      var Pie = Recharts.Pie;
+      var BarChart = Recharts.BarChart;
+      var Bar = Recharts.Bar;
+      var Cell = Recharts.Cell;
+      var Tooltip = Recharts.Tooltip;
+      var ResponsiveContainer = Recharts.ResponsiveContainer;
+      var Legend = Recharts.Legend;
+      var XAxis = Recharts.XAxis;
+      var YAxis = Recharts.YAxis;
+      var CartesianGrid = Recharts.CartesianGrid;
+
+      // --- HOOKS ---
+      var optimisticHook = window.App.Hooks.useOptimisticAction();
+      var isOptimistic = optimisticHook.isOptimistic;
+      var runOptimistic = optimisticHook.run;
+      
+      // Memoiza e Inverte para mostrar recentes
+      var memoizedTransfers = React.useMemo(function() {
+          return (propTransferList || []).map(function(t) { 
+              return Object.assign({}, t, { 
+                  arrived: String(t.arrived).toUpperCase() === 'TRUE' || t.arrived === true 
+              });
+          }).reverse();
+      }, [propTransferList]);
+
+      var localState = window.App.Hooks.useLocalState(memoizedTransfers, isOptimistic);
+      var transfers = localState[0];
+      var setTransfers = localState[1];
+      var chartTabState = React.useState('CONVENIO');
+      var activeChartTab = chartTabState[0];
+      var setActiveChartTab = chartTabState[1];
+
+      // Helper para Data Local YYYY-MM-DD
+      var getToday = function() {
+          var d = new Date();
+          return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+      };
+
+      var initialFormState = { 
+        patient: '', insurance: '', sector: '', bed: '', 
+        date: getToday(),
+        status: '', flow: '', reason: '', paId: '' 
+      };
+      var formDataState = React.useState(initialFormState);
+      var formData = formDataState[0];
+      var setFormData = formDataState[1];
+      
+      // Estados do Modal Lazy
+      var showHistoryModalState = React.useState(false);
+      var showHistoryModal = showHistoryModalState[0];
+      var setShowHistoryModal = showHistoryModalState[1];
+      var modalHistoryDataState = React.useState([]);
+      var modalHistoryData = modalHistoryDataState[0];
+      var setModalHistoryData = modalHistoryDataState[1];
+      var isLoadingHistoryState = React.useState(false);
+      var isLoadingHistory = isLoadingHistoryState[0];
+      var setIsLoadingHistory = isLoadingHistoryState[1];
+      var historyFiltersState = React.useState({ 
+          startDate: new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0], 
+          endDate: getToday(), 
+          insurance: '', 
+          search: '' 
+      });
+      var historyFilters = historyFiltersState[0];
+      var setHistoryFilters = historyFiltersState[1];
+
+      var showReportModalState = React.useState(false);
+      var showReportModal = showReportModalState[0];
+      var setShowReportModal = showReportModalState[1];
+      var showMenuState = React.useState(false);
+      var showMenu = showMenuState[0];
+      var setShowMenu = showMenuState[1];
+      var submitHook = UI.useSubmit ? UI.useSubmit() : { isSubmitting: false, submit: async function(fn) { return await fn(); } };
+      var isSubmitting = submitHook.isSubmitting;
+      var submit = submitHook.submit;
+
+      // Filtros do Gráfico (Dashboard)
+      var dateFilterState = React.useState({ 
+          start: new Date(new Date().setDate(new Date().getDate() - 7)).toISOString().split('T')[0], 
+          end: new Date().toISOString().split('T')[0]
+      });
+      var dateFilter = dateFilterState[0];
+      var setDateFilter = dateFilterState[1];
+
+        // --- DADOS DINÂMICOS ---
+        var INSURANCE_OPTIONS = window.App.INSURANCE_OPTIONS || [];
+        
+        // --- FIX: MENU DE SETORES ---
+        var SECTOR_OPTIONS = React.useMemo(function() {
+            // 1. Tenta pegar o menu específico de TRANSFER
+            var list = structure.menus ? (structure.menus['TRANSFER'] || []) : [];
+            
+            // 2. Fallback para menu de REGISTRO (comum compartilharem)
+            if (!list || list.length === 0) {
+                list = structure.menus ? (structure.menus['REGISTRO'] || []) : [];
+            }
+            
+            // 3. Se encontrou menu configurado, usa ele
+            if (list.length > 0) {
+                return list.map(function(s) { return { value: s, label: s }; });
+            }
+
+            // 4. Fallback final: Todos os setores do hospital ordenados
+            return (structure && structure.sectors ? structure.sectors : [])
+                .sort(function(a, b) { return (a.order || 0) - (b.order || 0); })
+                .map(function(s) { return { value: s.name, label: s.name }; });
+        }, [structure]);
+
+      var FLOW_OPTIONS = [
+          { value: 'ENTRADA', label: 'ENTRADA (Admissão Externa)' },
+          { value: 'SAIDA', label: 'SAÍDA (Transferência Externa)' }
+      ];
+
+      var STATUS_OPTIONS = [
+          { value: 'ACEITO', label: 'ACEITO' },
+          { value: 'RECUSADO', label: 'RECUSADO' },
+          { value: 'AGUARDANDO', label: 'AGUARDANDO' }
+      ];
+
+      // --- PREENCHIMENTO AUTOMÁTICO ---
+      React.useEffect(function() {
+          if (preFillData && preFillData.source === 'PA_TRANSFER') {
+              setFormData(function(prev) {
+                  return Object.assign({}, prev, {
+                      patient: preFillData.name || '',
+                      insurance: preFillData.insurance || '',
+                      flow: 'ENTRADA', 
+                      status: 'AGUARDANDO', 
+                      sector: '', 
+                      reason: '',
+                      paId: preFillData.paId || '',
+                      date: getToday() 
+                  });
+              });
+              if (onClearPreFill) onClearPreFill();
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+              if(UI.Toast) UI.Toast.show("Dados importados do PA", "success");
+          }
+      }, [preFillData, onClearPreFill]);
+
+      // --- HANDLER: BUSCAR HISTÓRICO LAZY ---
+      var fetchHistory = async function() {
+          setIsLoadingHistory(true);
+          try {
+              var data = await Service.Flows.getTransferHistoryRange(historyFilters.startDate, historyFilters.endDate);
+              setModalHistoryData(data || []);
+              if(UI.Toast) UI.Toast.show('Carregados ' + data.length + ' registros.', "success");
+          } catch (e) {
+              console.error(e);
+              if(UI.Toast) UI.Toast.show("Erro ao buscar histórico.", "error");
+          } finally {
+              setIsLoadingHistory(false);
+          }
+      };
+
+      var handleInputChange = function(e) {
+        var name = e.target.name;
+        var value = e.target.value;
+        var upperValue = (name === 'patient' || name === 'reason' || name === 'insurance' || name === 'sector') ? value.toUpperCase() : value;
+        
+        setFormData(function(prev) {
+            var updates = Object.assign({}, prev);
+            updates[name] = upperValue;
+            if (name === 'flow') { updates.sector = ''; updates.bed = ''; }
+            if (name === 'sector') { updates.bed = ''; }
+            return updates;
+        });
+      };
+
+      var handleSave = async function(e) {
+        e.preventDefault();
+        
+            // Previne duplo-submit (UI.useSubmit também impede)
+        if (isSubmitting) return;
+
+        try {
+            // ✅ VALIDAÇÃO: usando UI.Validators quando disponível
+            try {
+                if (UI.Validators && UI.Validators.nonEmpty) UI.Validators.nonEmpty(formData.patient, 'Paciente');
+                if (UI.Validators && UI.Validators.nonEmpty) UI.Validators.nonEmpty(formData.insurance, 'Convênio');
+                if (UI.Validators && UI.Validators.nonEmpty) UI.Validators.nonEmpty(formData.flow, 'Tipo de fluxo');
+                if (UI.Validators && UI.Validators.nonEmpty) UI.Validators.nonEmpty(formData.sector, 'Setor destino');
+            } catch (vErr) {
+                if (UI.Toast && UI.Toast.show) UI.Toast.show('❌ ' + vErr.message, 'warning');
+                return;
+            }
+
+            if (UI.Toast && UI.Toast.show) UI.Toast.show('⏳ Registrando transferência...', 'loading');
+
+            var finalData = Object.assign({}, formData, { date: formData.date || getToday() });
+            var tempId = String(Date.now());
+            var newTransfer = Object.assign({ id: tempId, arrived: false }, finalData);
+
+            runOptimistic(
+                function() {
+                    var updatedList = [newTransfer].concat(transfers);
+                    setTransfers(updatedList);
+                    if (onGlobalUpdate) onGlobalUpdate('transfers', updatedList);
+                    setFormData(initialFormState);
+                    if (UI.Toast && UI.Toast.show) UI.Toast.show('✅ Transferência registrada!', 'success');
+                },
+                async function() { return await submit(async function() { 
+                    var result = await actions.transfer(newTransfer);
+                    if (result && result.status === 'ERROR') {
+                        throw new Error(result.message || 'Erro ao registrar transferência');
+                    }
+                    // Notificar NIR/Setor sobre nova transferência
+                    if (newTransfer.flow === 'ENTRADA') {
+                        createNotification({
+                            targetRole: 'NIR',
+                            type: 'TRANSFERÊNCIA',
+                            message: 'Nova solicitação de entrada: ' + newTransfer.patient + ' para o setor ' + newTransfer.sector + '.',
+                            actionLink: 'TRANSFER'
+                        });
+                    }
+                }); },
+                {
+                    onError: function(e) {
+                        setTransfers(transfers);
+                        if (onGlobalUpdate) onGlobalUpdate('transfers', transfers);
+                        if (UI.Toast && UI.Toast.show) UI.Toast.show('❌ Erro: ' + e.message, 'error');
+                    }
+                }
+            );
+        } catch (error) {
+            console.error('Erro ao registrar transferência:', error);
+            if (UI.Toast && UI.Toast.show) UI.Toast.show('❌ ' + (error.message || 'Erro ao registrar transferência'), 'error');
+        }
+      };
+
+      var handleDelete = async function(id) {
+          var ok = await UI.confirmThen('Deseja excluir este registro permanentemente?');
+          if (!ok) return;
+          runOptimistic(
+                  function() {
+                          var updatedList = transfers.filter(function(t) { return t.id !== id; });
+                          setTransfers(updatedList);
+                          if (onGlobalUpdate) onGlobalUpdate('transfers', updatedList);
+                          if (UI.Toast && UI.Toast.show) UI.Toast.show('Registro excluído.', 'success');
+                  },
+                  async function() { return await submit(async function() { return await actions.deleteTransfer(id); }); },
+                  {
+                      onError: function(e) {
+                          setTransfers(transfers);
+                          if (onGlobalUpdate) onGlobalUpdate('transfers', transfers);
+                          if (UI.Toast && UI.Toast.show) UI.Toast.show('❌ Erro: ' + e.message, 'error');
+                      }
+                  }
+          );
+      };
+
+      var handleArrived = function(t) {
+          if (t.flow === 'SAIDA') {
+              var targetPatient = patientsList.find(function(p) { return p.name === t.patient && !['SIM','ALTA','OBITO'].includes(p.dischargeStatus); });
+              var dischargePayload = {
+                  id: String(Date.now()), 
+                  attendance: targetPatient ? targetPatient.attendance : 'N/I', 
+                  patientName: t.patient, 
+                  insurance: t.insurance,
+                  originBed: targetPatient ? targetPatient.bed : 'TRANSFERÊNCIA', 
+                  reason: 'ALTA_CASA', 
+                  date: new Date().toISOString().split('T')[0],
+                  destinationBed: t.sector, 
+                  released: 'SIM', 
+                  finishedAt: new Date().toISOString()
+              };
+
+              runOptimistic(
+                  function() {
+                      var updatedTransfers = transfers.map(function(item) { return item.id === t.id ? Object.assign({}, item, { arrived: true }) : item; });
+                      setTransfers(updatedTransfers);
+                      if (onGlobalUpdate) {
+                          onGlobalUpdate('transfers', updatedTransfers);
+                          if (dischargeList) onGlobalUpdate('discharges', [dischargePayload].concat(dischargeList));
+                          if (targetPatient) {
+                              var newPatients = patientsList.filter(function(p) { return p.id !== targetPatient.id; });
+                              onGlobalUpdate('patients', newPatients);
+                              if (blockedBedsList) {
+                                  var newBlocked = blockedBedsList.concat([{ bed: targetPatient.bed, reason: 'HIGIENIZACAO', user: user.name, date: new Date().toISOString() }]);
+                                  onGlobalUpdate('blockedBeds', newBlocked);
+                              }
+                          }
+                          if (t.paId && paList) {
+                              var updatedPaList = paList.filter(function(p) { return String(p.id) !== String(t.paId); });
+                              onGlobalUpdate('paList', updatedPaList);
+                          }
+                      }
+                      if(UI.Toast) UI.Toast.show("Saída confirmada!", "success");
+                  },
+                  async function() { await actions.finishExternalTransfer(t, dischargePayload, t.paId, user.matricula); }
+              );
+
+          } else {
+              if (onTransferToRegister) {
+                  onTransferToRegister({
+                      transferId: t.id, paId: t.paId, fullTransfer: t,
+                      name: t.patient, insurance: t.insurance, sector: t.sector, bed: t.bed 
+                  });
+                  if(UI.Toast) UI.Toast.show("Redirecionando para Registro...", "success");
+              }
+          }
+      };
+
+      var chartStats = React.useMemo(function() {
+          var startStr = dateFilter.start;
+          var endStr = dateFilter.end;
+          var filtered = transfers.filter(function(t) {
+              if(!t.date) return false;
+              var itemDateStr = t.date.includes('T') ? t.date.split('T')[0] : t.date;
+              return itemDateStr >= startStr && itemDateStr <= endStr;
+          });
+          
+          var insuranceCounts = {};
+          filtered.forEach(function(t) { var ins = t.insurance || 'OUTROS'; insuranceCounts[ins] = (insuranceCounts[ins] || 0) + 1; });
+          var chartData = Object.keys(insuranceCounts).map(function(key) { return { name: key, value: insuranceCounts[key] }; }).sort(function(a, b) { return b.value - a.value; });
+
+          var statusCounts = { ACEITO: 0, RECUSADO: 0, AGUARDANDO: 0 };
+          filtered.forEach(function(t) { if (statusCounts[t.status] !== undefined) statusCounts[t.status]++; });
+          var statusData = Object.keys(statusCounts).map(function(key) { return { name: key, value: statusCounts[key], fill: key === 'ACEITO' ? '#10b981' : key === 'RECUSADO' ? '#f43f5e' : '#f59e0b' }; });
+
+          var flowCounts = { ENTRADA: 0, SAIDA: 0 };
+          filtered.forEach(function(t) { if (flowCounts[t.flow] !== undefined) flowCounts[t.flow]++; });
+          var flowData = [ { name: 'Entrada', value: flowCounts.ENTRADA, fill: '#06b6d4' }, { name: 'Saída', value: flowCounts.SAIDA, fill: '#f59e0b' } ];
+
+          return { 
+              total: filtered.length, 
+              accepted: filtered.filter(function(t) { return t.status === 'ACEITO'; }).length,
+              pending: filtered.filter(function(t) { return t.status === 'AGUARDANDO'; }).length,
+              rejected: filtered.filter(function(t) { return t.status === 'RECUSADO'; }).length,
+              flowEntry: flowCounts.ENTRADA, flowExit: flowCounts.SAIDA,
+              chartData: chartData, statusData: statusData, flowData: flowData, filteredData: filtered 
+          };
+      }, [transfers, dateFilter]);
+
+      var pendingTransfers = React.useMemo(function() {
+          return transfers.filter(function(t) { return (t.status === 'ACEITO' || t.status === 'AGUARDANDO') && (!t.arrived || String(t.arrived) === 'FALSE') && t.status !== 'CANCELADO'; });
+      }, [transfers]);
+      
+      var filteredModalData = React.useMemo(function() {
+          return modalHistoryData.filter(function(h) {
+              if (historyFilters.search && !String(h.patient).toUpperCase().includes(historyFilters.search.toUpperCase())) return false;
+              if (historyFilters.insurance && h.insurance !== historyFilters.insurance) return false;
+              return true;
+          });
+      }, [modalHistoryData, historyFilters.search, historyFilters.insurance]);
+
+      var TC = window.App.TransferComponents || {};
+      var TransferStats = TC.TransferStats;
+      var TransferForm = TC.TransferForm;
+      var TransferCharts = TC.TransferCharts;
+      var TransferPendingList = TC.TransferPendingList;
+      var TransferModals = TC.TransferModals;
+
+      if (!TransferStats || !TransferForm || !TransferCharts || !TransferPendingList || !TransferModals) {
+          return React.createElement('div', { className: 'p-10 text-rose-500 font-mono' }, 'Erro: Componentes de Transferência não carregados.');
+      }
+
+      return React.createElement(React.Fragment, null,
+        React.createElement('div', { className: 'nx-container !h-auto !overflow-visible px-10 pt-5 pb-24 animate-fade-in' },
+          React.createElement('div', { className: 'nx-header print-hidden' },
+              React.createElement('div', { className: 'nx-header-title-group' },
+                  React.createElement('h1', { className: 'nx-header-title' }, 'Transferências Externas'),
+                  React.createElement('p', { className: 'nx-header-subtitle' },
+                      'Gestão de fluxo de Entrada e Saída ',
+                      isOptimistic && React.createElement('span', { className: 'nx-sync-indicator' }, 'SINCRONIZANDO...')
+                  )
+              ),
+              React.createElement('div', { className: 'flex items-center gap-4' },
+                  React.createElement('div', { className: 'relative' },
+                      React.createElement('button', { onClick: function() { setShowMenu(!showMenu); }, className: 'nx-header-btn group' },
+                          React.createElement('i', { className: 'ph-bold ph-list text-2xl group-hover:scale-110 transition-transform' })
+                      ),
+                      showMenu && React.createElement(React.Fragment, null,
+                        React.createElement('div', { className: 'nx-dropdown-overlay', onClick: function() { setShowMenu(false); } }),
+                        React.createElement('div', { className: 'nx-dropdown-menu' },
+                            React.createElement('button', { onClick: function() { setShowReportModal(true); setShowMenu(false); }, className: 'nx-dropdown-btn' },
+                                React.createElement('i', { className: 'ph-bold ph-file-text text-cyan-400' }),
+                                ' Relatório'
+                            ),
+                            React.createElement('button', { onClick: function() { setShowHistoryModal(true); setShowMenu(false); fetchHistory(); }, className: 'nx-dropdown-btn' },
+                                React.createElement('i', { className: 'ph-bold ph-clock-counter-clockwise text-emerald-400' }),
+                                ' Histórico'
+                            )
+                        )
+                      )
+                  )
+              )
+          ),
+          React.createElement('div', { className: 'nx-header-divider print-hidden' }),
+          React.createElement('div', null,
+              React.createElement(TransferStats, { chartStats: chartStats }),
+              React.createElement('div', { className: 'grid grid-cols-1 lg:grid-cols-2 gap-8 h-full items-start print-hidden' },
+                  React.createElement(TransferForm, { 
+                    formData: formData, handleInputChange: handleInputChange, handleSave: handleSave, 
+                    initialFormState: initialFormState, setFormData: setFormData, isSubmitting: isSubmitting, 
+                    INSURANCE_OPTIONS: INSURANCE_OPTIONS, SECTOR_OPTIONS: SECTOR_OPTIONS, 
+                    FLOW_OPTIONS: FLOW_OPTIONS, STATUS_OPTIONS: STATUS_OPTIONS, 
+                    structure: structure, patientsList: patientsList, blockedBedsList: blockedBedsList
+                  }),
+                  React.createElement(TransferCharts, { 
+                    activeChartTab: activeChartTab, setActiveChartTab: setActiveChartTab, 
+                    dateFilter: dateFilter, setDateFilter: setDateFilter, chartStats: chartStats 
+                  })
+              ),
+              React.createElement(TransferPendingList, { 
+                pendingTransfers: pendingTransfers, handleArrived: handleArrived, handleDelete: handleDelete 
+              })
+          )
+        ),
+        React.createElement(TransferModals, { 
+            showHistoryModal: showHistoryModal, setShowHistoryModal: setShowHistoryModal, 
+            historyFilters: historyFilters, setHistoryFilters: setHistoryFilters, 
+            INSURANCE_OPTIONS: INSURANCE_OPTIONS, fetchHistory: fetchHistory, 
+            isLoadingHistory: isLoadingHistory, filteredModalData: filteredModalData, 
+            showReportModal: showReportModal, setShowReportModal: setShowReportModal, 
+            chartStats: chartStats
+        })
+      );
+    };
+    
+    window.App.Transfer = Transfer;
+  })();
+</script>

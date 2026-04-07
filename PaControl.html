@@ -1,0 +1,354 @@
+<script>
+  (function() {
+    window.App = window.App || {};
+
+    var PaControl = function(props) {
+        var onTransferToRegister = props.onTransferToRegister;
+        var onTransferToTransfer = props.onTransferToTransfer;
+
+        var ctx = window.App.Context.useAppContext();
+        var user = ctx.user;
+        var paList = ctx.paList;
+        var propPaList = paList;
+        var patientsList = ctx.patientsList;
+        var blockedBedsList = ctx.blockedBedsList;
+        var propRestricted = ctx.restrictedList;
+        var onRefresh = ctx.onRefresh;
+        var onGlobalUpdate = ctx.onGlobalUpdate;
+        var structure = ctx.structure;
+        var actions = ctx.actions;
+        var globalTime = ctx.globalTime;
+
+        var notifResult = window.App.Context.useNotifications();
+        var createNotification = notifResult.createNotification || function() {};
+
+        var UI = window.App.UI || {};
+        var Utils = window.App.Utils || {};
+
+        // --- HOOKS OTIMISTAS ---
+        var optimisticResult = window.App.Hooks.useOptimisticAction();
+        var isOptimistic = optimisticResult.isOptimistic;
+        var runOptimistic = optimisticResult.run;
+        var patientsState = window.App.Hooks.useLocalState(propPaList || [], isOptimistic);
+        var patients = patientsState[0];
+        var setPatients = patientsState[1];
+        var restrictedState = window.App.Hooks.useLocalState(propRestricted || [], isOptimistic);
+        var restrictedList = restrictedState[0];
+        var setRestrictedList = restrictedState[1];
+
+        // time substituído por globalTime
+        var currentTime = globalTime || new Date();
+
+        var showMenuState = React.useState(false);
+        var showMenu = showMenuState[0];
+        var setShowMenu = showMenuState[1];
+
+        var showRestrictedModalState = React.useState(false);
+        var showRestrictedModal = showRestrictedModalState[0];
+        var setShowRestrictedModal = showRestrictedModalState[1];
+
+        var renewalModalState = React.useState({ show: false, patient: null });
+        var renewalModal = renewalModalState[0];
+        var setRenewalModal = renewalModalState[1];
+
+        var confirmDialogState = React.useState({ show: false, idToDelete: null });
+        var confirmDialog = confirmDialogState[0];
+        var setConfirmDialog = confirmDialogState[1];
+
+        var admissionModalState = React.useState({ show: false, data: null });
+        var admissionModal = admissionModalState[0];
+        var setAdmissionModal = admissionModalState[1];
+
+        var editPaModalState = React.useState({ show: false, data: null });
+        var editPaModal = editPaModalState[0];
+        var setEditPaModal = editPaModalState[1];
+
+        var submitResult = UI.useSubmit ? UI.useSubmit() : { isSubmitting: false, submit: async function(fn) { return await fn(); } };
+        var isSubmitting = submitResult.isSubmitting;
+        var submit = submitResult.submit;
+
+        // --- FORMULÁRIO DE ENTRADA RÁPIDA (ADD) ---
+        var getToday = function() {
+            var d = new Date();
+            return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+        };
+        var getTimeNow = function() { return new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }); };
+
+        var initialForm = {
+            patient: '', insurance: '', sector: '', assistantDoctor: '', specialty: '',
+            date: getToday(), time: getTimeNow()
+        };
+        var formDataState = React.useState(initialForm);
+        var formData = formDataState[0];
+        var setFormData = formDataState[1];
+        var restrictedFormState = React.useState({ name: '', reason: '' });
+        var restrictedForm = restrictedFormState[0];
+        var setRestrictedForm = restrictedFormState[1];
+
+        // --- DADOS DINÂMICOS ---
+        var INSURANCE_OPTIONS = window.App.INSURANCE_OPTIONS || [];
+
+        // --- CORREÇÃO: MENU DE SETORES INTELIGENTE ---
+        var SECTOR_OPTIONS = React.useMemo(function() {
+            var list = structure.menus ? structure.menus['PA'] || [] : [];
+
+            if (!list || list.length === 0) {
+                list = structure.menus ? structure.menus['REGISTRO'] || [] : [];
+            }
+
+            if (list.length > 0) {
+                return list.map(function(s) { return { value: s, label: s }; });
+            }
+
+            if (!structure || !structure.sectors) return [];
+            return structure.sectors.sort(function(a, b) { return (a.order || 0) - (b.order || 0); }).map(function(s) { return { value: s.name, label: s.name }; });
+        }, [structure]);
+
+        var SPECIALTY_OPTIONS = React.useMemo(function() {
+            return (structure && structure.specialties || []).map(function(s) { return { value: s.name || s, label: s.name || s }; });
+        }, [structure]);
+
+        // --- ESTATÍSTICAS ---
+        var stats = React.useMemo(function() {
+            return Utils.calculatePaStats(patients, currentTime, structure && structure.sectors || []);
+        }, [patients, currentTime, structure, Utils]);
+
+        // --- AÇÕES DO FORMULÁRIO DE P.A. (ADD) ---
+        var handleAddPatient = function(e) {
+            e.preventDefault();
+            if (!formData.patient) return;
+
+            var tempId = 'pa-' + Date.now();
+            var newP = Object.assign({}, formData, { id: tempId });
+
+            runOptimistic(
+                function() {
+                    var updated = patients.concat([newP]);
+                    setPatients(updated);
+                    if (onGlobalUpdate) onGlobalUpdate('paList', updated);
+                    setFormData(Object.assign({}, initialForm, { date: getToday(), time: getTimeNow() }));
+                    if (UI.Toast && UI.Toast.show) UI.Toast.show('Paciente adicionado!', 'success');
+
+                    createNotification({
+                        targetRole: 'ENFERMAGEM',
+                        type: 'ADMISSÃO PA',
+                        message: 'Novo paciente no PA: ' + newP.patient + ' (' + newP.specialty + ').',
+                        actionLink: 'PA_CONTROL'
+                    });
+                },
+                async function() { return await submit(async function() { return await actions.addPaPatient(newP); }); }
+            );
+        };
+
+        // --- HANDLER: RENOVAR TEMPO ---
+        var handleConfirmRenewal = function() {
+            var p = renewalModal.patient;
+            if (!p) return;
+            var updatedPatient = Object.assign({}, p, { date: getToday(), time: getTimeNow() });
+
+            runOptimistic(
+                function() {
+                    var updatedList = patients.map(function(pat) { return pat.id === p.id ? updatedPatient : pat; });
+                    setPatients(updatedList);
+                    if (onGlobalUpdate) onGlobalUpdate('paList', updatedList);
+                    setRenewalModal({ show: false, patient: null });
+                    if (UI.Toast && UI.Toast.show) UI.Toast.show('Tempo renovado!', 'success');
+                },
+                async function() { return await submit(async function() {
+                    if (actions.updatePaPatient) return await actions.updatePaPatient(updatedPatient);
+                    return await actions.addPaPatient(updatedPatient);
+                }); }
+            );
+        };
+
+        // --- HANDLER: EXCLUIR ---
+        var handleDelete = function(idToDelete) {
+            runOptimistic(
+                function() {
+                    var newList = patients.filter(function(pt) { return pt.id !== idToDelete; });
+                    setPatients(newList);
+                    setConfirmDialog({show:false});
+                    if (onGlobalUpdate) onGlobalUpdate('paList', newList);
+                    if (UI.Toast && UI.Toast.show) UI.Toast.show('Removido da fila.', 'success');
+                },
+                async function() { return await submit(async function() { return await actions.deletePaPatient(idToDelete); }); }
+            );
+        };
+
+        // --- HANDLER: INTERNAR (ATÔMICO V4) ---
+        var handleOpenAdmission = function(p) {
+            setAdmissionModal({
+                show: true,
+                data: {
+                    paId: p.id,
+                    name: p.patient || p.name,
+                    insurance: p.insurance,
+                    sector: '',
+                    bed: '',
+                    assistantDoctor: p.assistantDoctor || '',
+                    specialty: p.specialty || '',
+                    attendance: ''
+                }
+            });
+        };
+
+        var confirmAdmission = function(e) {
+            e.preventDefault();
+            var admData = admissionModal.data;
+            try {
+                if (UI.Validators && UI.Validators.nonEmpty) UI.Validators.nonEmpty(admData.bed, 'Leito');
+                if (UI.Validators && UI.Validators.nonEmpty) UI.Validators.nonEmpty(admData.attendance, 'Número de atendimento');
+            } catch (vErr) {
+                if (UI.Toast && UI.Toast.show) UI.Toast.show('❌ ' + vErr.message, 'error');
+                return;
+            }
+
+            var newPatient = {
+                id: String(Date.now()),
+                name: admData.name,
+                attendance: admData.attendance,
+                insurance: admData.insurance,
+                sector: admData.sector,
+                bed: admData.bed,
+                assistantDoctor: admData.assistantDoctor,
+                specialty: admData.specialty,
+                createdAt: new Date().toISOString(),
+                dischargeStatus: 'NAO',
+                bedHistory: JSON.stringify([admData.bed])
+            };
+
+            var paIdToRemove = admData.paId;
+
+            runOptimistic(
+                function() {
+                    var newPaList = patients.filter(function(p) { return p.id !== paIdToRemove; });
+                    setPatients(newPaList);
+                    if (onGlobalUpdate) onGlobalUpdate('paList', newPaList);
+                    setAdmissionModal({ show: false, data: null });
+                    if (UI.Toast && UI.Toast.show) UI.Toast.show('Internação realizada!', 'success');
+                },
+                async function() { return await submit(async function() {
+                    var result = await actions.admitFromPa(newPatient, paIdToRemove);
+                    if (result && result.status === 'ERROR') throw new Error(result.message);
+
+                    createNotification({
+                        targetRole: 'NIR',
+                        type: 'INTERNAÇÃO',
+                        message: 'Internação concluída: ' + newPatient.name + ' para o leito ' + newPatient.bed + ' (' + newPatient.sector + ').',
+                        actionLink: 'BED_MAP'
+                    });
+                }); }
+            );
+        };
+
+        // --- HANDLER: EDITAR DADOS P.A. ---
+        var handleOpenEditPa = function(p) {
+            setEditPaModal({
+                show: true,
+                data: Object.assign({}, p, { patient: p.patient || p.name })
+            });
+        };
+
+        var confirmEditPa = function(e) {
+            e.preventDefault();
+            var edited = editPaModal.data;
+
+            runOptimistic(
+                function() {
+                    var updatedList = patients.map(function(p) { return p.id === edited.id ? edited : p; });
+                    setPatients(updatedList);
+                    if (onGlobalUpdate) onGlobalUpdate('paList', updatedList);
+                    setEditPaModal({ show: false, data: null });
+                    if (UI.Toast && UI.Toast.show) UI.Toast.show('Registro atualizado!', 'success');
+                },
+                async function() { return await submit(async function() {
+                    if (actions.updatePaPatient) return await actions.updatePaPatient(edited);
+                    return await actions.addPaPatient(edited);
+                }); }
+            );
+        };
+
+        var checkRestricted = function(name) {
+            if (!name) return null;
+            var norm = Utils.normalize(name);
+            return restrictedList.find(function(r) { return Utils.normalize(r.name) === norm || norm.includes(Utils.normalize(r.name)); });
+        };
+
+        var PaControlStats = (window.App.PaControlComponents || {}).PaControlStats;
+        var PaControlForm = (window.App.PaControlComponents || {}).PaControlForm;
+        var PaControlWaitList = (window.App.PaControlComponents || {}).PaControlWaitList;
+        var PaControlModals = (window.App.PaControlComponents || {}).PaControlModals;
+
+        if (!PaControlStats || !PaControlForm || !PaControlWaitList || !PaControlModals) {
+            return React.createElement('div', { className: 'p-10 text-rose-500 font-mono' }, 'Erro: Componentes de Controle de P.A. não carregados.');
+        }
+
+        return React.createElement('div', { className: 'nx-container !h-auto !overflow-visible px-10 pt-5 pb-24 animate-fade-in' },
+            React.createElement('div', { className: 'nx-header' },
+                React.createElement('div', { className: 'nx-header-title-group' },
+                    React.createElement('h1', { className: 'nx-header-title' }, 'Controle de P.A.'),
+                    React.createElement('p', { className: 'nx-header-subtitle' },
+                        'Gestão de Fila e Admissão Rápida ',
+                        isOptimistic && React.createElement('span', { className: 'nx-sync-indicator' }, 'SINCRONIZANDO...')
+                    )
+                ),
+                React.createElement('div', { className: 'flex items-center gap-4' },
+                    React.createElement('div', { className: 'relative' },
+                        React.createElement('button', { onClick: function() { setShowMenu(!showMenu); }, className: 'nx-header-btn group' },
+                            React.createElement('i', { className: 'ph-bold ph-list text-2xl group-hover:scale-110 transition-transform' })
+                        ),
+                        showMenu && React.createElement(React.Fragment, null,
+                            React.createElement('div', { className: 'nx-dropdown-overlay', onClick: function() { setShowMenu(false); } }),
+                            React.createElement('div', { className: 'nx-dropdown-menu' },
+                                React.createElement('button', { onClick: function() { setShowRestrictedModal(true); setShowMenu(false); }, className: 'nx-dropdown-btn' },
+                                    React.createElement('i', { className: 'ph-bold ph-prohibit text-rose-500 text-lg' }), ' Pacientes Restritos'
+                                )
+                            )
+                        )
+                    )
+                )
+            ),
+            React.createElement('div', { className: 'nx-header-divider' }),
+
+            React.createElement('div', null,
+                React.createElement(PaControlStats, { stats: stats }),
+
+                React.createElement('div', { className: 'grid grid-cols-1 lg:grid-cols-2 gap-8 items-start h-full' },
+                    React.createElement('div', { className: 'lg:col-span-1' },
+                        React.createElement(PaControlForm,
+                            { formData: formData, setFormData: setFormData, handleAddPatient: handleAddPatient,
+                              initialForm: initialForm, INSURANCE_OPTIONS: INSURANCE_OPTIONS,
+                              SECTOR_OPTIONS: SECTOR_OPTIONS, SPECIALTY_OPTIONS: SPECIALTY_OPTIONS }
+                        )
+                    ),
+
+                    React.createElement('div', { className: 'lg:col-span-1 h-full' },
+                        React.createElement(PaControlWaitList,
+                            { patients: patients, currentTime: currentTime, checkRestricted: checkRestricted,
+                              handleOpenAdmission: handleOpenAdmission, handleOpenEditPa: handleOpenEditPa,
+                              setRenewalModal: setRenewalModal, setConfirmDialog: setConfirmDialog }
+                        )
+                    )
+                )
+            ),
+
+            React.createElement(PaControlModals,
+                { admissionModal: admissionModal, setAdmissionModal: setAdmissionModal,
+                  confirmAdmission: confirmAdmission, INSURANCE_OPTIONS: INSURANCE_OPTIONS,
+                  SECTOR_OPTIONS: SECTOR_OPTIONS, SPECIALTY_OPTIONS: SPECIALTY_OPTIONS,
+                  structure: structure, patientsList: patientsList, blockedBedsList: blockedBedsList,
+                  editPaModal: editPaModal, setEditPaModal: setEditPaModal, confirmEditPa: confirmEditPa,
+                  renewalModal: renewalModal, setRenewalModal: setRenewalModal,
+                  handleConfirmRenewal: handleConfirmRenewal, confirmDialog: confirmDialog,
+                  setConfirmDialog: setConfirmDialog, handleDelete: handleDelete,
+                  showRestrictedModal: showRestrictedModal, setShowRestrictedModal: setShowRestrictedModal,
+                  restrictedForm: restrictedForm, setRestrictedForm: setRestrictedForm,
+                  restrictedList: restrictedList, setRestrictedList: setRestrictedList,
+                  runOptimistic: runOptimistic, actions: actions }
+            )
+        );
+    };
+
+    window.App.PaControl = PaControl;
+  })();
+</script>

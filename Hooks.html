@@ -1,0 +1,322 @@
+
+<script>
+  (function() {
+    window.App = window.App || {};
+    
+    // Safety check: React must be available
+    if (!window.React) {
+        console.error("Hooks: React not found. Scripts order is incorrect.");
+        return;
+    }
+
+    const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+    window.App.Hooks = {
+        _version: "8.9.1",
+        
+        /**
+         * useAppActions
+         * 
+         * Encapsula todas as ações de negócio que conectam a UI ao Service.
+         * Gerencia automaticamente o refresh da aplicação após ações bem-sucedidas.
+         * 
+         * @param {Object} user - Usuário logado
+         * @param {Function} refreshFn - Função para recarregar dados globais (initSystem)
+         */
+        useAppActions: (user, refreshFn) => {
+            const Service = window.App.Service;
+            
+            return useMemo(() => {
+                const refresh = () => { 
+                    setTimeout(refreshFn, 1000); 
+                    setTimeout(refreshFn, 4000); 
+                };
+
+                return {
+                    // --- PACIENTES ---
+                    savePatient: async (p) => { 
+                        // Versão segura que passa o user para auditoria
+                        const r = await Service.Patients.saveAtomic(p, false, user); 
+                        refresh(); 
+                        return r; 
+                    },
+                    updatePatient: async (p) => { 
+                        const r = await Service.Patients.saveAtomic(p, true, user); 
+                        refresh(); 
+                        return r; 
+                    },
+                    deletePatient: async (id) => { 
+                        // PASSANDO USUÁRIO PARA AUDITORIA/PERMISSÃO
+                        const r = await Service.Patients.delete(id, user); 
+                        refresh(); 
+                        return r; 
+                    },
+                    savePatientAtomic: async (data, isEdit) => { 
+                        const r = await Service.Patients.saveAtomic(data, isEdit, user); 
+                        refresh(); 
+                        return r; 
+                    },
+                    
+                    // --- LEITOS ---
+                    bedAction: async (type, pl) => { 
+                        if(type==='OCCUPY') await Service.Beds.occupy(pl, user);
+                        if(type==='BLOCK') await Service.Beds.block(pl.bed, pl.reason, user?.matricula || 'SYS', user);
+                        if(type==='UNBLOCK') await Service.Beds.unblock(pl.bed, user?.matricula, user);
+                        refresh();
+                    },
+                    saveStructureBed: async (b) => { 
+                        const r = await Service.Beds.saveStructure(b, user); 
+                        refresh(); 
+                        return r; 
+                    },
+                    deleteStructureBed: async (n) => { 
+                        const r = await Service.Beds.deleteStructure(n, user); 
+                        refresh(); 
+                        return r; 
+                    },
+                    
+                    // --- FLUXOS ---
+                    transfer: async (d) => { 
+                        const r = await Service.Flows.addTransfer(d, user); 
+                        refresh(); 
+                        return r; 
+                    },
+                    updateTransfer: async (t) => { 
+                        const r = await Service.Flows.updateTransfer(t, user); 
+                        refresh(); 
+                        return r; 
+                    },
+                    deleteTransfer: async (id) => { 
+                        const r = await Service.Flows.deleteTransfer(id, user); 
+                        refresh(); 
+                        return r; 
+                    },
+                    getTransferHistoryChunk: async (offset, limit) => { 
+                        return await Service.Flows.getTransferHistory(offset, limit); 
+                    },
+                    
+                    discharge: async (d) => { 
+                        const r = await Service.Flows.processDischarge(d.record || d, user); 
+                        refresh(); 
+                        return r; 
+                    },
+                    getDischargeHistoryChunk: async (offset, limit) => { 
+                        return await Service.Flows.getDischargeHistory(offset, limit); 
+                    },
+                    dischargeWithCleaning: async (record, bed, userMatricula) => { 
+                        const r = await Service.Flows.dischargeWithCleaning(record, bed, userMatricula, user); 
+                        refresh(); 
+                        return r; 
+                    },
+                    
+                    executeInternalTransfer: async (pId, oB, nB, nS, u) => { 
+                        const r = await Service.Flows.executeInternalTransfer(pId, oB, nB, nS, u, user); 
+                        refresh(); 
+                        return r; 
+                    },
+                    finishExternalTransfer: async (t, d, paId, u) => { 
+                        const r = await Service.Flows.finishExternalTransfer(t, d, paId, u, user); 
+                        refresh(); 
+                        return r; 
+                    },
+                    
+                    // --- P.A. ---
+                    addPaPatient: async (p) => { 
+                        const r = await Service.Emergency.add(p, user); 
+                        refresh(); 
+                        return r; 
+                    },
+                    updatePaPatient: async (p) => { 
+                        const r = await Service.Emergency.update(p, user); 
+                        refresh(); 
+                        return r; 
+                    },
+                    deletePaPatient: async (id) => { 
+                        const r = await Service.Emergency.delete(id, user); 
+                        refresh(); 
+                        return r; 
+                    },
+                    addRestrictedPatient: async (p) => { 
+                        const r = await Service.Emergency.addRestricted(p, user); 
+                        refresh(); 
+                        return r; 
+                    },
+                    admitFromPa: async (data, paId) => { 
+                        const r = await Service.Emergency.admit(data, paId, user); 
+                        refresh(); 
+                        return r; 
+                    },
+                    
+                    // --- ADMIN / OUTROS ---
+                    saveForecast: async (d) => { 
+                        await Service.Admin.saveForecast(d, user); 
+                        refresh();
+                    },
+                    saveUser: async (u) => { 
+                        const r = await Service.Admin.saveUser(u, user); 
+                        refresh(); 
+                        return r; 
+                    },
+                    deleteUser: async (id) => { 
+                        const r = await Service.Admin.deleteUser(id, user); 
+                        refresh(); 
+                        return r; 
+                    },
+                    saveSectorOrder: async (n, o) => { 
+                        const r = await Service.Admin.saveSectorOrder(n, o, user); 
+                        refresh(); 
+                        return r; 
+                    },
+                    deleteSector: async (n) => { 
+                        const r = await Service.Admin.deleteSector(n, user); 
+                        refresh(); 
+                        return r; 
+                    },
+                    renameSector: async (o, n) => { 
+                        const r = await Service.Admin.renameSector(o, n, user); 
+                        refresh(); 
+                        return r; 
+                    },
+                    saveInsurance: async (i) => { 
+                        const r = await Service.Admin.saveInsurance(i, user); 
+                        refresh(); 
+                        return r; 
+                    },
+                    deleteInsurance: async (n) => { 
+                        const r = await Service.Admin.deleteInsurance(n, user); 
+                        refresh(); 
+                        return r; 
+                    },
+                    saveSpecialty: async (s) => { 
+                        const r = await Service.Admin.saveSpecialty(s, user); 
+                        refresh(); 
+                        return r; 
+                    },
+                    deleteSpecialty: async (n) => { 
+                        const r = await Service.Admin.deleteSpecialty(n, user); 
+                        refresh(); 
+                        return r; 
+                    },
+                    
+                    // IA Config Persistence
+                    saveAiConfig: async (key, value) => {
+                        const r = await Service.Admin.saveAiConfig(key, value, user);
+                        refresh(); // Atualiza o contexto global com os novos prompts/modelo
+                        return r;
+                    },
+                    
+                    diagnoseSystem: async () => { return await Service.diagnoseSystem(); },
+                    callGeminiAi: async (prompt, contextKey) => { return await Service.callGeminiAi(prompt, contextKey); },
+                    
+                    // --- ROTATION ---
+                    addRotationMember: async (data) => {
+                        const r = await Service.Admin.addRotationMember(data, user);
+                        refresh();
+                        return r;
+                    },
+                    deleteRotationMember: async (id) => {
+                        const r = await Service.Admin.deleteRotationMember(id, user);
+                        refresh();
+                        return r;
+                    },
+                    
+                    onGlobalUpdate: () => {}, 
+                    onRefresh: refreshFn
+                };
+            }, [user, refreshFn]);
+        },
+
+        /**
+         * useCache
+         * 
+         * Gerencia o estado de cache para evitar refetch desnecessário.
+         * 
+         * @param {number} ttl - Time to live em milissegundos
+         */
+        useCache: (ttl = 30000) => {
+            const [cachedData, setCachedData] = useState(null);
+            const [cacheTime, setCacheTime] = useState(0);
+
+            const isValid = useCallback(() => {
+                const now = Date.now();
+                return cachedData && (now - cacheTime) < ttl;
+            }, [cachedData, cacheTime, ttl]);
+
+            const update = useCallback((data) => {
+                setCachedData(data);
+                setCacheTime(Date.now());
+            }, []);
+
+            const clear = useCallback(() => {
+                setCachedData(null);
+                setCacheTime(0);
+            }, []);
+
+            return { cachedData, isValid, update, clear };
+        },
+
+        /**
+         * useOptimisticAction
+         * 
+         * Gerencia operações que atualizam a UI instantaneamente (otimista)
+         * enquanto aguardam a confirmação do servidor.
+         */
+        useOptimisticAction: (bufferTime = 20000) => {
+            const [isOptimistic, setIsOptimistic] = useState(false);
+            const syncTimer = useRef(null);
+            
+            useEffect(() => {
+                return () => { if (syncTimer.current) clearTimeout(syncTimer.current); };
+            }, []);
+
+            const run = useCallback(async (updateLocalFn, serverPromiseFn, options = {}) => {
+                const { onSuccess, onError } = options;
+                
+                updateLocalFn();
+                setIsOptimistic(true);
+                
+                if (syncTimer.current) clearTimeout(syncTimer.current);
+                syncTimer.current = setTimeout(() => {
+                    setIsOptimistic(false);
+                }, bufferTime);
+
+                try {
+                    if (serverPromiseFn) {
+                        const result = await serverPromiseFn();
+                        if (result && result.status === 'ERROR') throw new Error(result.message);
+                        if (onSuccess) onSuccess(result);
+                    }
+                } catch (e) {
+                    setIsOptimistic(false);
+                    if (onError) onError(e);
+                    window.App.ErrorHandler.handle(e, 'Hooks.useOptimisticAction');
+                }
+            }, [bufferTime]);
+
+            return { isOptimistic, run };
+        },
+
+        useInterval: (callback, delay) => {
+            const savedCallback = useRef();
+            useEffect(() => { savedCallback.current = callback; }, [callback]);
+            useEffect(() => {
+                if (delay !== null) {
+                    const id = setInterval(() => savedCallback.current(), delay);
+                    return () => clearInterval(id);
+                }
+            }, [delay]);
+        },
+
+        useLocalState: (serverData, isOptimistic) => {
+            const [localData, setLocalData] = useState(serverData);
+            useEffect(() => {
+                if (!isOptimistic) {
+                    setLocalData(serverData);
+                }
+            }, [serverData, isOptimistic]);
+            return [localData, setLocalData];
+        }
+    };
+    console.log("[Hooks.html] Hooks initialized");
+  })();
+</script>

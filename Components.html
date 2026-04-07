@@ -1,0 +1,633 @@
+
+<script>
+  (function() {
+    window.App = window.App || {};
+
+    // --- 1. BOTÃO (Button) ---
+    const Button = React.forwardRef(({ children, onClick, type = "button", variant = "primary", disabled, loading, icon, className = "", ...props }, ref) => {
+        const base = "relative flex items-center justify-center font-bold uppercase tracking-wider transition-all duration-300 rounded-xl select-none disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]";
+        
+        const variants = {
+            primary: "bg-blue-900 hover:bg-blue-800 dark:bg-slate-800 dark:hover:bg-slate-700 text-white shadow-sm hover:shadow-md border border-blue-900 dark:border-slate-700 hover:border-blue-800 dark:hover:border-slate-600",
+            secondary: "bg-transparent hover:bg-blue-50 dark:hover:bg-slate-800/50 text-blue-600 dark:text-slate-300 border border-blue-200 dark:border-slate-700 hover:border-blue-300 dark:hover:border-slate-600",
+            danger: "bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/30 dark:hover:bg-rose-900/50 text-rose-600 dark:text-rose-400 hover:text-rose-700 dark:hover:text-rose-300 border border-rose-200 dark:border-rose-900/50 hover:border-rose-300 dark:hover:border-rose-800",
+            ghost: "bg-transparent hover:bg-blue-50 dark:hover:bg-white/5 text-blue-500 dark:text-slate-400 hover:text-blue-900 dark:hover:text-white",
+            icon: "p-2 aspect-square rounded-full bg-blue-50 dark:bg-slate-800/50 text-blue-500 dark:text-slate-400 hover:text-blue-900 dark:hover:text-white hover:bg-blue-100 dark:hover:bg-slate-700 border border-blue-200 dark:border-slate-700/50"
+        };
+
+        const sizeClass = props.size === 'sm' ? 'h-9 text-[10px] px-4' : 'h-12 text-xs px-6';
+
+        return React.createElement('button', { 
+            ref: ref,
+            type: type, onClick: onClick, disabled: disabled || loading, 
+            className: `${base} ${variants[variant]} ${variant !== 'icon' ? sizeClass : ''} ${className}`,
+            onKeyDown: (e) => { if (props.onKeyDown) props.onKeyDown(e); },
+            ...props
+        },
+            loading ? React.createElement('i', { className: 'ph-bold ph-circle-notch animate-spin text-lg' }) : (
+                React.createElement(React.Fragment, null,
+                    icon && React.createElement('i', { className: `ph-bold ${icon} ${children ? 'mr-2' : ''} text-lg` }),
+                    children
+                )
+            )
+        );
+    });
+
+    // --- 2. INPUT (MODERN BOX STYLE) ---
+    const Input = React.forwardRef(({ label, name, value, onChange, type="text", icon, disabled, required, className, onKeyDown, variant = "line", ...props }, ref) => {
+        const { useState } = React;
+        const [focused, setFocused] = useState(false);
+        const hasVal = String(value || '').length > 0;
+        const isDate = type === 'date' || type === 'time';
+
+        const handleKeyDown = (e) => {
+            if (onKeyDown) onKeyDown(e);
+            if (window.App.Utils && window.App.Utils.handleEnterNavigation) {
+                window.App.Utils.handleEnterNavigation(e);
+            }
+        };
+
+        // Styles
+        const baseStyles = "peer block w-full text-sm transition-all duration-200 font-medium uppercase tracking-wide focus:outline-none focus:ring-0 disabled:opacity-50 disabled:cursor-not-allowed";
+        
+        const variants = {
+            line: "py-3 px-0 bg-transparent border-0 border-b border-blue-200 dark:border-slate-700 focus:border-blue-500 dark:focus:border-slate-400 text-blue-900 dark:text-white",
+            box: `h-12 px-4 rounded-xl border ${focused ? 'border-blue-500 ring-1 ring-blue-500/20' : 'border-blue-400/20 dark:border-slate-700'} bg-[rgba(65,105,225,0.15)] dark:bg-[#0f172a] text-blue-900 dark:text-white placeholder-transparent`
+        };
+
+        const currentVariant = variants[variant] || variants.line;
+
+        return React.createElement('div', { className: `relative w-full mb-6 group ${className || ''}` },
+            React.createElement('input', { 
+                ref: ref,
+                type: type, name: name, value: value || '', onChange: onChange,
+                onFocus: () => setFocused(true), onBlur: () => setFocused(false),
+                onKeyDown: handleKeyDown,
+                disabled: disabled, required: required,
+                placeholder: ' ',
+                className: `${baseStyles} ${currentVariant} ${isDate && !hasVal && !focused ? 'text-transparent' : ''}`,
+                ...props
+            }),
+            React.createElement('label', { className: `absolute left-0 transition-all duration-300 pointer-events-none uppercase font-medium tracking-widest origin-[0]
+                ${variant === 'box' 
+                    ? (focused || hasVal || isDate ? 'left-3 -top-2.5 text-[9px] bg-transparent dark:bg-slate-900 px-1 text-blue-600 dark:text-cyan-400 backdrop-blur-sm' : 'left-4 top-3.5 text-xs text-blue-500')
+                    : (focused || hasVal || isDate ? '-top-4 text-[9px] text-blue-400' : 'top-3 text-xs text-blue-500')
+                }` },
+                label
+            ),
+            icon && React.createElement('i', { className: `ph-bold ${icon} absolute right-4 top-3.5 text-lg transition-colors ${focused ? 'text-blue-500' : 'text-blue-400'}` }),
+            variant === 'line' && React.createElement('div', { className: `absolute bottom-0 left-0 h-[1px] bg-blue-400 transition-all duration-500 ${focused ? 'w-full' : 'w-0'}` })
+        );
+    });
+
+    // --- 3. SELECT PESQUISÁVEL (MODERN BOX STYLE) ---
+    const SearchableSelect = React.forwardRef(({ label, value, onChange, options = [], disabled, required, className, onKeyDown, variant = "line", ...props }, ref) => {
+        const { useState, useEffect, useRef, useMemo, useImperativeHandle } = React;
+        const [isOpen, setIsOpen] = useState(false);
+        const [term, setTerm] = useState('');
+        const wrapperRef = useRef(null);
+        
+        // Permite que o ref externo aponte para o wrapper div
+        useImperativeHandle(ref, () => wrapperRef.current);
+
+        useEffect(() => {
+            const found = options.find(o => String(o.value || o.id || o.name) === String(value));
+            setTerm(found ? (found.label || found.name) : '');
+        }, [value, options]);
+
+        useEffect(() => {
+            const clickOut = (e) => { if (wrapperRef.current && !wrapperRef.current.contains(e.target)) { setIsOpen(false); } };
+            document.addEventListener("mousedown", clickOut);
+            return () => document.removeEventListener("mousedown", clickOut);
+        }, []);
+
+        const filtered = useMemo(() => {
+            if(!term || (options.find(o => (o.label||o.name) === term))) return options;
+            return options.filter(o => (o.label || o.name).toUpperCase().includes(term.toUpperCase()));
+        }, [term, options]);
+
+        const hasVal = String(value || '').length > 0;
+
+        const triggerChange = (newValue) => {
+            if (onChange) {
+                onChange({
+                    target: {
+                        name: props.name,
+                        value: newValue
+                    }
+                });
+            }
+        };
+
+        const handleKeyDown = (e) => {
+            if (onKeyDown) onKeyDown(e);
+            
+            if (e.key === 'Enter') {
+                e.preventDefault(); 
+                
+                // AUTO-SELECT FEATURE: Se só tem 1 opção, seleciona e avança
+                if (isOpen && filtered.length === 1) {
+                     const opt = filtered[0];
+                     const val = opt.value || opt.id || opt.name;
+                     triggerChange(val);
+                     setIsOpen(false);
+                } else {
+                    setIsOpen(false);
+                }
+
+                // Dispara navegação global
+                if (window.App.Utils && window.App.Utils.handleEnterNavigation) {
+                    window.App.Utils.handleEnterNavigation(e);
+                }
+            }
+        };
+
+        // Styles
+        const baseStyles = "peer block w-full text-sm transition-all duration-200 font-medium uppercase tracking-wide focus:outline-none focus:ring-0 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer";
+        
+        const variants = {
+            line: "py-3 px-0 bg-transparent border-0 border-b border-blue-200 dark:border-slate-700 focus:border-blue-500 dark:focus:border-slate-400 text-blue-900 dark:text-white",
+            box: `h-12 px-4 rounded-xl border ${isOpen ? 'border-blue-500 ring-1 ring-blue-500/20' : 'border-blue-400/20 dark:border-slate-700'} bg-[rgba(65,105,225,0.15)] dark:bg-[#0f172a] text-blue-900 dark:text-white placeholder-transparent`
+        };
+
+        const currentVariant = variants[variant] || variants.line;
+
+        return React.createElement('div', { className: `relative w-full mb-6 ${className}`, ref: wrapperRef },
+            React.createElement('div', { className: 'relative group' },
+                React.createElement('input', { 
+                    type: 'text', value: term, 
+                    onChange: e => { 
+                        setTerm(e.target.value.toUpperCase()); 
+                        setIsOpen(true); 
+                        if(e.target.value==='') triggerChange(''); 
+                    },
+                    onFocus: () => setIsOpen(true),
+                    onKeyDown: handleKeyDown,
+                    disabled: disabled,
+                    placeholder: ' ',
+                    className: `${baseStyles} ${currentVariant}`,
+                    ...props
+                }),
+                React.createElement('label', { className: `absolute left-0 transition-all duration-300 pointer-events-none uppercase font-medium tracking-widest origin-[0]
+                    ${variant === 'box'
+                        ? ((term || isOpen || hasVal) ? 'left-3 -top-2.5 text-[9px] bg-transparent dark:bg-slate-900 px-1 text-blue-600 dark:text-cyan-400 backdrop-blur-sm' : 'left-4 top-3.5 text-xs text-blue-500')
+                        : ((term || isOpen || hasVal) ? '-top-4 text-[9px] text-blue-400' : 'top-3 text-xs text-blue-500')
+                    }` },
+                    label
+                ),
+                React.createElement('i', { className: `ph-bold ph-caret-down absolute right-4 top-3.5 text-blue-500 transition-transform ${isOpen ? 'rotate-180 text-blue-500' : ''}` }),
+                variant === 'line' && React.createElement('div', { className: `absolute bottom-0 left-0 h-[1px] bg-blue-400 transition-all duration-500 ${isOpen ? 'w-full' : 'w-0'}` })
+            ),
+            
+            isOpen && !disabled && React.createElement('div', { className: 'absolute z-50 w-full mt-1 bg-blue-50 dark:bg-slate-900 border border-blue-200 dark:border-slate-700 rounded-xl shadow-2xl max-h-60 overflow-y-auto custom-scrollbar animate-fade-in' },
+                filtered.length > 0 ? filtered.map((opt, i) => {
+                    const val = opt.value || opt.id || opt.name;
+                    const isSelected = String(val) === String(value);
+                    return React.createElement('div', {
+                        key: i,
+                        onMouseDown: () => { triggerChange(val); setIsOpen(false); },
+                        className: `px-4 py-3 text-xs font-bold uppercase cursor-pointer hover:bg-blue-100 dark:hover:bg-slate-800 border-b border-blue-100 dark:border-slate-800/50 flex justify-between ${isSelected ? 'text-blue-600 dark:text-cyan-400 bg-blue-50 dark:bg-slate-800/50' : 'text-blue-600 dark:text-slate-300'}`
+                    },
+                        opt.label || opt.name,
+                        isSelected && React.createElement('i', { className: 'ph-bold ph-check' })
+                    );
+                }) : React.createElement('div', { className: 'p-4 text-xs text-blue-500 text-center font-bold uppercase tracking-widest' }, 'Nada encontrado')
+            )
+        );
+    });
+
+    // --- 3.1 EMPTY STATE (NEW) ---
+    const EmptyState = ({ title = "Sem dados", description = "Nenhuma informação disponível no momento.", icon = "ph-folder-open" }) => {
+        return React.createElement('div', { className: 'flex flex-col items-center justify-center p-12 text-center opacity-60 hover:opacity-100 transition-opacity select-none' },
+            React.createElement('div', { className: 'w-24 h-24 mb-6 rounded-full bg-blue-50 dark:bg-slate-800/50 flex items-center justify-center relative overflow-hidden group' },
+                React.createElement('div', { className: 'absolute inset-0 bg-gradient-to-tr from-blue-500/10 to-purple-500/10 opacity-0 group-hover:opacity-100 transition-opacity' }),
+                React.createElement('i', { className: `ph-thin ${icon} text-5xl text-blue-400 dark:text-slate-500 group-hover:scale-110 transition-transform duration-500` })
+            ),
+            React.createElement('h3', { className: 'text-lg font-black text-blue-700 dark:text-slate-200 uppercase tracking-tight mb-2' }, title),
+            React.createElement('p', { className: 'text-xs font-medium text-blue-500 dark:text-slate-400 max-w-xs leading-relaxed' }, description)
+        );
+    };
+
+    // --- 4. BED SELECTOR (SELETOR DE LEITOS INTELIGENTE) ---
+    const BedSelector = React.forwardRef(({ label, value, onChange, sector, structure, patientsList, blockedBedsList, excludePatientId, disabled, required, className, ...props }, ref) => {
+        const { useState, useEffect } = React;
+        const [options, setOptions] = useState([]);
+
+        useEffect(() => {
+            if (!structure?.beds) {
+                setOptions([]);
+                return;
+            }
+
+            const normalize = window.App.Utils ? window.App.Utils.normalize : (str) => String(str||'').toUpperCase().trim();
+            const sectorNorm = sector ? normalize(sector) : null;
+
+            const occupied = new Set();
+            (patientsList || []).forEach(p => {
+                if (p.bed && !['SIM','ALTA','OBITO'].includes(p.dischargeStatus)) {
+                    if (excludePatientId && String(p.id) === String(excludePatientId)) return;
+                    occupied.add(normalize(p.bed));
+                }
+            });
+
+            const blocked = new Set();
+            (blockedBedsList || []).forEach(b => {
+                blocked.add(normalize(b.bed));
+            });
+
+            const available = structure.beds
+                .filter(b => {
+                    if (sectorNorm) {
+                        const bSecNorm = normalize(b.sector);
+                        if (bSecNorm !== sectorNorm) return false;
+                    }
+                    const bNumNorm = normalize(b.number);
+                    return !occupied.has(bNumNorm) && !blocked.has(bNumNorm);
+                })
+                .map(b => ({ 
+                    value: b.number, 
+                    label: `${b.number} (${b.sector})` 
+                }))
+                .sort((a,b) => a.value.localeCompare(b.value, undefined, {numeric: true}));
+
+            setOptions(available);
+        }, [sector, structure, patientsList, blockedBedsList, excludePatientId]);
+
+        return React.createElement(SearchableSelect, { 
+            ref: ref,
+            label: label || "Leito", 
+            value: value, 
+            onChange: onChange, 
+            options: options, 
+            disabled: disabled, 
+            required: required, 
+            className: className,
+            ...props
+        });
+    });
+
+    // --- 5. KPI CARD (STYLE: AURORA / DE-BOXED) ---
+    const KPICard = React.forwardRef(({ label, value, icon, theme = 'kpi-blue', subtext, data, onClick, className }, ref) => {
+        const hasData = Array.isArray(data) && data.length > 0;
+        
+        // Mapeamento de temas para cores seguras (Tailwind classes completas)
+        const themes = {
+            'kpi-blue':   { text: 'text-blue-600 dark:text-blue-400',   glow: 'bg-blue-500' },
+            'kpi-emerald':{ text: 'text-emerald-600 dark:text-emerald-400',glow: 'bg-emerald-500' },
+            'kpi-rose':   { text: 'text-rose-600 dark:text-rose-400',   glow: 'bg-rose-500' },
+            'kpi-amber':  { text: 'text-amber-600 dark:text-amber-400',  glow: 'bg-amber-500' },
+            'kpi-cyan':   { text: 'text-cyan-600 dark:text-cyan-400',   glow: 'bg-cyan-500' },
+            'kpi-purple': { text: 'text-purple-600 dark:text-purple-400', glow: 'bg-purple-500' },
+            'kpi-indigo': { text: 'text-indigo-600 dark:text-indigo-400', glow: 'bg-indigo-500' },
+            'kpi-slate':  { text: 'text-slate-600 dark:text-slate-400',  glow: 'bg-slate-500' }
+        };
+        const t = themes[theme] || themes['kpi-blue'];
+
+        return React.createElement('div', { 
+            ref: ref,
+            onClick: onClick, 
+            className: `nx-kpi-card group ${className} ${onClick ? 'cursor-pointer' : ''}`
+        },
+            // AURORA GLOWS (Luz ambiente sem bordas)
+            React.createElement('div', { className: `absolute -top-12 -right-12 w-40 h-40 ${t.glow} opacity-[0.10] dark:opacity-[0.15] blur-[60px] rounded-full pointer-events-none transition-opacity duration-500 group-hover:opacity-20 dark:group-hover:opacity-25` }),
+            
+            // CONTEÚDO FLUTUANTE
+            React.createElement('div', { className: 'relative z-10 flex flex-col h-full justify-between w-full' },
+                
+                // Header: Ícone + Label Minimalista
+                React.createElement('div', { className: 'flex items-center gap-3 mb-2 opacity-80 group-hover:opacity-100 transition-opacity' },
+                    React.createElement('i', { className: `ph-fill ${icon} ${t.text} text-lg drop-shadow-[0_0_8px_rgba(0,0,0,0.1)] dark:drop-shadow-[0_0_8px_rgba(0,0,0,0.5)]` }),
+                    React.createElement('span', { className: 'text-[10px] font-bold uppercase tracking-[0.25em] text-blue-500 dark:text-slate-400' }, label)
+                ),
+
+                // Corpo: Dados Principais
+                hasData ? (
+                    React.createElement('div', { className: 'flex items-baseline gap-6 mt-1' },
+                        data.map((d, i) => React.createElement('div', { key: i, className: `flex flex-col ${i > 0 ? 'pl-6 border-l border-blue-100 dark:border-white/5' : ''}` },
+                            React.createElement('span', { className: 'text-3xl lg:text-4xl font-light text-blue-900 dark:text-white leading-none font-mono-nums tracking-tighter' }, d.value),
+                            React.createElement('span', { className: `text-[9px] font-bold ${t.text} opacity-80 uppercase tracking-wider mt-1` }, d.label)
+                        ))
+                    )
+                ) : (
+                    React.createElement('div', null,
+                        // Número "Solto" e Elegante
+                        React.createElement('span', { className: 'text-5xl lg:text-6xl font-light text-blue-900 dark:text-white leading-none font-mono-nums tracking-tighter drop-shadow-sm dark:drop-shadow-lg block mb-1' },
+                            value
+                        ),
+                        subtext && React.createElement('p', { className: 'text-[10px] font-bold text-blue-500 uppercase tracking-widest pl-1' }, subtext)
+                    )
+                )
+            )
+        );
+    });
+
+    // --- 6. MODAL (COM FOCUS TRAP E ACESSIBILIDADE) ---
+    const Modal = ({ isOpen, onClose, title, children, size = 'normal', className = '', variant = 'default' }) => {
+        const { useEffect, useRef } = React;
+        const modalRef = useRef(null);
+        const previousFocusRef = useRef(null);
+
+        useEffect(() => {
+            if (!isOpen) return;
+
+            // Salva o elemento que tinha o foco antes de abrir o modal
+            previousFocusRef.current = document.activeElement;
+
+            const handleKeyDown = (e) => {
+                if (e.key === 'Escape') {
+                    if (onClose) onClose();
+                    return;
+                }
+
+                if (e.key === 'Tab') {
+                    if (!modalRef.current) return;
+
+                    const focusableElements = modalRef.current.querySelectorAll(
+                        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+                    );
+                    
+                    if (focusableElements.length === 0) {
+                        e.preventDefault();
+                        return;
+                    }
+
+                    const firstElement = focusableElements[0];
+                    const lastElement = focusableElements[focusableElements.length - 1];
+
+                    if (e.shiftKey) {
+                        // Shift + Tab
+                        if (document.activeElement === firstElement) {
+                            lastElement.focus();
+                            e.preventDefault();
+                        }
+                    } else {
+                        // Tab
+                        if (document.activeElement === lastElement) {
+                            firstElement.focus();
+                            e.preventDefault();
+                        }
+                    }
+                }
+            };
+
+            document.addEventListener('keydown', handleKeyDown);
+
+            // Foca no primeiro elemento ao abrir (com um pequeno delay para garantir a renderização)
+            const timeoutId = setTimeout(() => {
+                if (modalRef.current) {
+                    const focusableElements = modalRef.current.querySelectorAll(
+                        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+                    );
+                    if (focusableElements.length > 0) {
+                        focusableElements[0].focus();
+                    } else {
+                        modalRef.current.focus(); // Foca no próprio modal se não houver elementos interativos
+                    }
+                }
+            }, 50);
+
+            return () => {
+                document.removeEventListener('keydown', handleKeyDown);
+                clearTimeout(timeoutId);
+                // Restaura o foco ao fechar
+                if (previousFocusRef.current && previousFocusRef.current.focus) {
+                    previousFocusRef.current.focus();
+                }
+            };
+        }, [isOpen, onClose]);
+
+        if (!isOpen) return null;
+        var sizeClass = size === 'large' ? 'nx-modal-lg' : 'nx-modal-md';
+        var variantClass = variant === 'transparent' ? 'nx-modal-transparent' : 'nx-modal-default';
+
+        return ReactDOM.createPortal(
+            React.createElement('div', { className: 'nx-modal-overlay', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': title ? 'modal-title' : undefined },
+                React.createElement('div', { className: 'nx-modal-backdrop', onClick: onClose, 'aria-hidden': 'true' }),
+                React.createElement('div', { 
+                    ref: modalRef,
+                    tabIndex: '-1',
+                    className: 'nx-modal-content ' + sizeClass + ' ' + variantClass + ' ' + (className || '')
+                },
+                    title && variant !== 'transparent' && React.createElement('div', { className: 'nx-modal-header' },
+                        React.createElement('h3', { id: 'modal-title', className: 'nx-modal-title' }, title),
+                        React.createElement('button', { onClick: onClose, className: 'nx-modal-close', 'aria-label': 'Fechar modal' }, React.createElement('i', { className: 'ph-bold ph-x' }))
+                    ),
+                    React.createElement('div', { className: 'nx-modal-body' }, children)
+                )
+            ), document.body
+        );
+    };
+
+    // --- 7. TOAST ---
+    const Toast = ({ show, message, type = 'success' }) => {
+        if (!show) return null;
+        const styles = { 
+            success: 'border-emerald-200 dark:border-emerald-500/50 text-emerald-800 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/80', 
+            error: 'border-rose-200 dark:border-rose-500/50 text-rose-800 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/80', 
+            warning: 'border-amber-200 dark:border-amber-500/50 text-amber-800 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/80' 
+        };
+        const icons = { success: 'ph-check-circle', error: 'ph-warning-circle', warning: 'ph-warning' };
+        return ReactDOM.createPortal(
+            React.createElement('div', { className: `fixed top-6 right-6 z-[60] flex items-center gap-3 px-6 py-4 rounded-xl border backdrop-blur-md shadow-2xl animate-enter ${styles[type] || styles.success}` },
+                React.createElement('i', { className: `ph-fill ${icons[type] || icons.success} text-2xl` }),
+                React.createElement('span', { className: 'text-xs font-black uppercase tracking-wide' }, message)
+            ), document.body
+        );
+    };
+
+    // Static Helper para disparar toasts
+    Toast.show = (message, type = 'success') => {
+        const event = new CustomEvent('app-toast', { detail: { message, type } });
+        window.dispatchEvent(event);
+    };
+
+    // --- 8. NEON BAR ---
+    const NeonBar = ({ value, max, label, sublabel, color = "blue", className = "" }) => {
+        const pct = Math.min(100, Math.round((value / (max || 1)) * 100));
+        return React.createElement('div', { className: `mb-6 group ${className} select-none` },
+            React.createElement('div', { className: 'flex justify-between items-end mb-2' },
+                React.createElement('span', { className: 'text-[11px] font-bold text-slate-500 dark:text-slate-300 uppercase tracking-wider group-hover:text-slate-800 dark:group-hover:text-white transition-colors' }, label),
+                React.createElement('div', { className: 'text-right' },
+                    React.createElement('span', { className: `text-sm font-black font-mono-nums text-${color}-600 dark:text-${color}-400 mr-1` }, value),
+                    React.createElement('span', { className: 'text-[9px] text-slate-400 dark:text-slate-600 font-bold' }, `/ ${max}`)
+                )
+            ),
+            React.createElement('div', { className: 'h-1.5 w-full bg-blue-100 dark:bg-slate-800/50 rounded-full overflow-hidden relative' },
+                React.createElement('div', { 
+                    className: `h-full bg-${color}-500 rounded-full relative transition-all duration-1000`, 
+                    style: { width: `${pct}%`, boxShadow: '0 0 10px var(--tw-shadow-color)' }
+                },
+                    React.createElement('div', { className: 'absolute top-0 right-0 bottom-0 w-1 bg-white/50' })
+                )
+            ),
+            sublabel && React.createElement('div', { className: 'text-[9px] text-slate-400 dark:text-slate-600 mt-1 text-right' }, sublabel)
+        );
+    };
+
+    // --- 9. STATUS GRID (vanilla CSS — no Tailwind) ---
+    const StatusGrid = ({ subSectors, color = 'blue', cols = 5, className = '' }) => {
+        var gridColsClass = cols === 3 ? 'nx-sg-cols-3' : 'nx-sg-cols-5';
+        return React.createElement('div', { className: 'nx-sg-grid ' + gridColsClass + ' ' + (className || '') },
+            (subSectors || []).map(function(sec, i) {
+                var safeName = sec.name || '?';
+                var shortName = safeName.replace(/(CTI|UTI|0|PEDIATRIA|PED| )/g,'').substring(0,1) || safeName.substring(0,1);
+                var isZero = sec.free === 0;
+                var colorClass = 'nx-sg-bg-' + (color || 'blue');
+                return React.createElement('div', { key: i, className: 'nx-sg-cell' },
+                    React.createElement('div', { className: 'nx-sg-watermark ' + colorClass }, shortName),
+                    React.createElement('div', { className: 'nx-sg-content' },
+                        React.createElement('span', { className: 'nx-sg-num font-mono-nums' + (isZero ? ' nx-sg-num-zero' : '') }, sec.free)
+                    )
+                );
+            })
+        );
+    };
+
+    // --- 10. PHONE PREVIEW (REDESIGN FINAL SIMPLIFICADO) ---
+    const PhonePreview = ({ reportText, onCopy, onClose, className = "" }) => {
+        // Safe access to HospitalLogo
+        const HospitalLogo = window.HospitalLogo;
+        const hasLogo = typeof HospitalLogo === 'function';
+        
+        return React.createElement('div', { className: 'nx-pp-wrap ' + (className || '') },
+            React.createElement('div', { className: 'nx-pp-device' },
+                // ILHA (Notch)
+                React.createElement('div', { className: 'nx-pp-notch' },
+                    React.createElement('div', { className: 'nx-pp-notch-cam' }),
+                    React.createElement('div', { className: 'nx-pp-notch-speaker' })
+                ),
+                // BARRA DE STATUS
+                React.createElement('div', { className: 'nx-pp-statusbar' },
+                    React.createElement('span', null, new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})),
+                    React.createElement('div', { className: 'nx-pp-statusbar-icons' },
+                        React.createElement('i', { className: 'ph-fill ph-cell-signal-full' }),
+                        React.createElement('i', { className: 'ph-fill ph-wifi-high' }),
+                        React.createElement('i', { className: 'ph-fill ph-battery-full' })
+                    )
+                ),
+                // CONTEUDO DA TELA
+                React.createElement('div', { className: 'nx-pp-screen' },
+                    // HEADER DO APP
+                    React.createElement('div', { className: 'nx-pp-app-header' },
+                        React.createElement('div', { className: 'nx-pp-app-header-left' },
+                            onClose && React.createElement('button', { onClick: onClose, className: 'nx-pp-back-btn' }, React.createElement('i', { className: 'ph-bold ph-arrow-left' })),
+                            React.createElement('div', { className: 'nx-pp-avatar' },
+                                hasLogo ?
+                                    React.createElement(HospitalLogo, { className: 'nx-pp-avatar-logo', variant: 'mini' }) :
+                                    React.createElement('i', { className: 'ph-fill ph-hospital nx-pp-avatar-icon' })
+                            ),
+                            React.createElement('div', { className: 'nx-pp-app-info' },
+                                React.createElement('span', { className: 'nx-pp-app-name' }, 'Gestao de Leitos'),
+                                React.createElement('span', { className: 'nx-pp-app-status' }, 'online')
+                            )
+                        ),
+                        React.createElement('div', { className: 'nx-pp-app-header-right' },
+                            React.createElement('i', { className: 'ph-bold ph-video-camera' }),
+                            React.createElement('i', { className: 'ph-bold ph-phone' }),
+                            React.createElement('i', { className: 'ph-bold ph-dots-three-vertical' })
+                        )
+                    ),
+                    // AREA DE CHAT
+                    React.createElement('div', { className: 'nx-pp-chat-area' },
+                        React.createElement('div', { className: 'nx-pp-chat-date' },
+                            React.createElement('span', null, 'HOJE')
+                        ),
+                        React.createElement('div', { className: 'nx-pp-msg-bubble' },
+                            React.createElement('div', { className: 'nx-pp-msg-text' },
+                                (reportText || '').split(/(\*[^*]+\*)/g).map(function(part, i) {
+                                    return part.startsWith('*') && part.endsWith('*')
+                                        ? React.createElement('strong', { key: i }, part.slice(1,-1))
+                                        : part;
+                                })
+                            ),
+                            React.createElement('div', { className: 'nx-pp-msg-meta' },
+                                new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+                                React.createElement('i', { className: 'ph-bold ph-checks' })
+                            )
+                        )
+                    ),
+                    // FOOTER
+                    React.createElement('div', { className: 'nx-pp-footer' },
+                        React.createElement('div', { className: 'nx-pp-footer-icon' }, React.createElement('i', { className: 'ph-bold ph-plus' })),
+                        React.createElement('div', { className: 'nx-pp-footer-input' }, 'Mensagem...'),
+                        onCopy && React.createElement('button', { onClick: onCopy, className: 'nx-pp-footer-send', title: 'Copiar e Enviar' },
+                            React.createElement('i', { className: 'ph-fill ph-paper-plane-right' })
+                        )
+                    ),
+                    // HOME INDICATOR
+                    React.createElement('div', { className: 'nx-pp-home-indicator' })
+                )
+            )
+        );
+    };
+
+    // --- 11. CARD (MODERN INTEGRATED STYLE) ---
+    const Card = React.forwardRef(({ children, variant = 'solid', className = '', ...props }, ref) => {
+      let variantClass = '';
+      if (variant === 'transparent') {
+        variantClass = 'bg-transparent border-none shadow-none';
+      } else if (variant === 'glass') {
+        variantClass = 'bg-blue-600/15 dark:bg-slate-900/40 backdrop-blur-md border border-blue-400/20 dark:border-slate-700/50 rounded-2xl p-8';
+      } else {
+        variantClass = 'nx-card'; 
+      }
+
+      return React.createElement('div', { ref: ref, className: `${variantClass} ${className}`, ...props },
+        children
+      );
+    });
+
+    // --- 12. STATUS BADGE ---
+    const StatusBadge = ({ status, label, className = '' }) => {
+      const statusConfig = {
+        available: { color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-500', icon: 'ph-check-circle' },
+        occupied: { color: 'bg-rose-100 text-rose-700 dark:bg-rose-950/30 dark:text-rose-400', icon: 'ph-bed' },
+        cleaning: { color: 'bg-purple-100 text-purple-700 dark:bg-purple-950/30 dark:text-purple-400 animate-pulse', icon: 'ph-broom' },
+        reserved: { color: 'bg-amber-100 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400', icon: 'ph-clock' },
+        maintenance: { color: 'bg-blue-100 text-blue-500 dark:bg-slate-800 dark:text-slate-500 dark:border-slate-700', icon: 'ph-wrench' },
+        cyan: { color: 'bg-cyan-400 text-blue-900 dark:bg-cyan-500/30 dark:text-cyan-400', icon: 'ph-info' },
+        navy: { color: 'bg-blue-900 text-cyan-400 dark:bg-blue-950 dark:text-cyan-500', icon: 'ph-info' }
+      };
+
+      const config = statusConfig[status] || statusConfig.available;
+      const displayLabel = label || status.charAt(0).toUpperCase() + status.slice(1);
+
+      return React.createElement('span', { className: `inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${config.color} ${className}` },
+        React.createElement('i', { className: config.icon }),
+        displayLabel
+      );
+    };
+
+    // --- 13. USE SUBMIT HOOK ---
+    const useSubmit = () => {
+      const { useState, useCallback } = React;
+      const [isSubmitting, setIsSubmitting] = useState(false);
+
+      const submit = useCallback(async (fn) => {
+        if (isSubmitting) return; 
+
+        setIsSubmitting(true);
+        try {
+          const result = await fn();
+          return result;
+        } catch (error) {
+          throw error;
+        } finally {
+          setIsSubmitting(false);
+        }
+      }, [isSubmitting]);
+
+      return { isSubmitting, submit };
+    };
+
+    // --- EXPORTAÇÃO ---
+    const uiComponents = { 
+        Button, Input, SearchableSelect, EmptyState, BedSelector, 
+        KPICard, Modal, NeonBar, StatusGrid, PhonePreview,
+        Card, StatusBadge, useSubmit
+    };
+    
+    window.App.UI = Object.assign(window.App.UI || {}, uiComponents);
+    console.log("[Components.html] UI components initialized:", Object.keys(window.App.UI));
+  })();
+</script>

@@ -1,0 +1,174 @@
+
+<script>
+  (function() {
+    window.App = window.App || {};
+
+    var CensusView = function(props) {
+        var censusFilter = props.censusFilter;
+        var setCensusFilter = props.setCensusFilter;
+        var filterOptions = props.filterOptions;
+        var handlePrint = props.handlePrint;
+
+        var ctx = window.App.Context.useAppContext();
+        var user = ctx.user;
+        var structure = ctx.structure;
+        var patientsList = ctx.patientsList;
+        var blockedBedsList = ctx.blockedBedsList;
+
+        var Utils = window.App.Utils || {};
+        var UI = window.App.UI || {};
+        var ReportComponents = window.App.ReportComponents || {};
+        var ReportPage = ReportComponents.ReportPage;
+
+        if (!ReportPage) {
+            return React.createElement('div', { className: 'p-10 text-rose-500 font-mono' }, 'Erro: Componente ReportPage n\u00e3o carregado.');
+        }
+
+        var currentFooterTime = React.useMemo(function() { return new Date().toLocaleString('pt-BR'); }, []);
+
+        // --- CENSUS LOGIC ---
+        var censusData = React.useMemo(function() {
+            var sectors = (structure && structure.sectors) || [];
+            var mappedSectors = sectors.filter(function(s) { return !s.isVirtual; }).sort(function(a, b) { return (a.order || 999) - (b.order || 999); }).map(function(s) {
+                var beds = (structure.beds || []).filter(function(b) { return b.sector === s.name; }).map(function(b) {
+                    var status = 'VAGO'; var details = ''; var date = ''; var daysStr = ''; var daysInt = 0;
+                    var patient = patientsList.find(function(p) { return Utils.normalize(p.bed) === Utils.normalize(b.number) && !['SIM', 'ALTA', 'OBITO'].includes(p.dischargeStatus); });
+                    var block = blockedBedsList.find(function(blk) { return Utils.normalize(blk.bed) === Utils.normalize(b.number); });
+                    if (patient) {
+                        status = 'OCUPADO'; details = patient.name + ' (' + patient.insurance + ')';
+                        if (patient.createdAt) {
+                            var entryDate = new Date(patient.createdAt); date = entryDate.toLocaleDateString();
+                            var diffTime = Math.abs(new Date() - entryDate); daysInt = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); daysStr = daysInt + ' dias';
+                        }
+                    } else if (block) { status = 'BLOQUEADO'; details = block.reason; date = block.date ? new Date(block.date).toLocaleDateString() : ''; }
+                    return { number: b.number, status: status, details: details, date: date, daysStr: daysStr, daysInt: daysInt };
+                }).sort(function(a, b) { return String(a.number).localeCompare(String(b.number), undefined, { numeric: true }); });
+                return { name: s.name, beds: beds };
+            });
+            return mappedSectors.map(function(sec) {
+                if (censusFilter === 'DAYS_30') return Object.assign({}, sec, { beds: sec.beds.filter(function(b) { return b.status === 'OCUPADO' && b.daysInt > 30; }) });
+                if (censusFilter === 'DAYS_45') return Object.assign({}, sec, { beds: sec.beds.filter(function(b) { return b.status === 'OCUPADO' && b.daysInt > 45; }) });
+                return sec;
+            }).filter(function(sec) {
+                if (censusFilter === 'DAYS_30' || censusFilter === 'DAYS_45') return sec.beds.length > 0;
+                return !censusFilter || sec.name === censusFilter;
+            });
+        }, [structure, patientsList, blockedBedsList, censusFilter]);
+
+        var paginatedCensus = React.useMemo(function() {
+            var LINES_PER_PAGE = (window.App.Constants && window.App.Constants.REPORT_CENSUS_LINES_PER_PAGE) || 28;
+            var pages = [];
+            var currentPage = [];
+            var currentLines = 0;
+
+            if (!censusData || censusData.length === 0) return [];
+
+            censusData.forEach(function(sec) {
+                // Check if Sector Header fits
+                if (currentLines + 2 > LINES_PER_PAGE) {
+                    pages.push(currentPage);
+                    currentPage = [];
+                    currentLines = 0;
+                }
+
+                // Add Sector Header
+                currentPage.push({ type: 'SECTOR', name: sec.name, continued: false });
+                currentLines += 2;
+
+                sec.beds.forEach(function(bed) {
+                    // Check if Bed fits
+                    if (currentLines + 1 > LINES_PER_PAGE) {
+                        pages.push(currentPage);
+                        currentPage = [];
+                        currentLines = 0;
+                        // Add Sector Header (Continued) on new page
+                        currentPage.push({ type: 'SECTOR', name: sec.name, continued: true });
+                        currentLines += 2;
+                    }
+                    currentPage.push({ type: 'BED', data: bed });
+                    currentLines += 1;
+                });
+            });
+
+            if (currentPage.length > 0) pages.push(currentPage);
+            return pages;
+        }, [censusData]);
+
+        return React.createElement('div', { className: 'h-full flex flex-col lg:flex-row gap-6' },
+            React.createElement('div', { className: 'w-full lg:w-96 flex flex-col gap-4 shrink-0 print-hidden h-full overflow-y-auto' },
+                React.createElement(UI.Card, { className: 'p-4' },
+                    React.createElement('h3', { className: 'text-xs font-black nx-text-heading uppercase mb-4 flex items-center gap-2' },
+                        React.createElement('i', { className: 'ph-bold ph-faders nx-icon-primary' }),
+                        ' Op\u00e7\u00f5es'
+                    ),
+                    React.createElement('div', { className: 'mb-4' },
+                        React.createElement(UI.SearchableSelect, {
+                            label: "Filtrar Relat\u00f3rio",
+                            value: censusFilter,
+                            onChange: function(e) { setCensusFilter(e.target.value); },
+                            options: filterOptions
+                        })
+                    ),
+                    React.createElement('button', { onClick: handlePrint, className: 'btn-action-confirm w-full' },
+                        React.createElement('i', { className: 'ph-bold ph-printer text-lg' }),
+                        ' Imprimir'
+                    )
+                )
+            ),
+
+            React.createElement('div', { className: 'flex-1 overflow-auto custom-scrollbar relative flex flex-col items-center py-[10px] bg-transparent print:p-0 print:overflow-visible print:block' },
+                paginatedCensus.map(function(page, pageIdx) {
+                    return React.createElement(ReportPage, {
+                        key: pageIdx,
+                        className: 'mb-8 last:mb-0',
+                        headerProps: {
+                            title: "Censo Di\u00e1rio",
+                            date: new Date().toLocaleDateString(),
+                            userName: user.name
+                        },
+                        footerProps: {
+                            pageInfo: currentFooterTime + ' \u2022 P\u00e1g ' + (pageIdx + 1) + '/' + paginatedCensus.length
+                        }
+                    },
+                        React.createElement('table', { className: 'w-full text-[9px] border-collapse border border-black table-fixed' },
+                            React.createElement('thead', null,
+                                React.createElement('tr', { className: 'bg-gray-100 h-7 border-b border-black' },
+                                    React.createElement('th', { className: 'border-r border-black p-1 w-16 text-center' }, 'Leito'),
+                                    React.createElement('th', { className: 'border-r border-black p-1 text-left' }, 'Paciente / Status'),
+                                    React.createElement('th', { className: 'border-r border-black p-1 w-16 text-center' }, 'Admiss\u00e3o'),
+                                    React.createElement('th', { className: 'border-r border-black p-1 w-10 text-center' }, 'Dias'),
+                                    React.createElement('th', { className: 'border-r border-black p-1 w-20 text-center' }, 'Novo Leito'),
+                                    React.createElement('th', { className: 'border-r border-black p-1 w-20 text-center' }, 'Data')
+                                )
+                            ),
+                            React.createElement('tbody', null,
+                                page.map(function(item, itemIdx) {
+                                    if (item.type === 'SECTOR') return React.createElement('tr', { key: 'sec-' + pageIdx + '-' + itemIdx, className: 'bg-gray-200 print:bg-gray-200 h-6 border-b border-black' },
+                                        React.createElement('td', { colSpan: '6', className: 'border-r border-black p-1 font-black uppercase text-left px-2 tracking-widest truncate' },
+                                            item.name, ' ', item.continued ? '(Continua\u00e7\u00e3o)' : ''
+                                        )
+                                    );
+                                    var bed = item.data;
+                                    return React.createElement('tr', { key: 'bed-' + pageIdx + '-' + itemIdx, className: 'h-8 border-b border-black' },
+                                        React.createElement('td', { className: 'border-r border-black p-1 text-center font-bold align-middle truncate' }, bed.number),
+                                        React.createElement('td', { className: 'border-r border-black p-1 align-middle overflow-hidden' },
+                                            React.createElement('div', { className: 'font-bold truncate' }, bed.status === 'OCUPADO' ? bed.details : bed.status),
+                                            bed.status !== 'OCUPADO' && bed.status !== 'VAGO' && React.createElement('div', { className: 'italic text-[8px] truncate' }, bed.details)
+                                        ),
+                                        React.createElement('td', { className: 'border-r border-black p-1 text-center align-middle truncate' }, bed.date),
+                                        React.createElement('td', { className: 'border-r border-black p-1 text-center font-bold align-middle truncate' }, bed.daysStr),
+                                        React.createElement('td', { className: 'border-r border-black p-1' }),
+                                        React.createElement('td', { className: 'border-r border-black p-1' })
+                                    );
+                                })
+                            )
+                        )
+                    );
+                })
+            )
+        );
+    };
+
+    window.App.CensusView = CensusView;
+  })();
+</script>

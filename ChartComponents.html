@@ -1,0 +1,145 @@
+
+<script>
+  (function() {
+    window.App = window.App || {};
+    window.App.Charts = window.App.Charts || {};
+
+    // Safety wrapper
+    const Recharts = window.Recharts || {};
+    const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend } = Recharts;
+
+    const hasRecharts = !!BarChart;
+
+    const Fallback = () => React.createElement('div', { className: 'flex items-center justify-center h-full text-slate-500 text-[10px] font-mono border border-dashed border-slate-700 rounded-lg' },
+        'GRÁFICO INDISPONÍVEL'
+    );
+
+    // --- 1. RADIAL GAUGE (Compact & Clean) ---
+    const RadialGauge = ({ value, label, subtext, color = "cyan", size = 160 }) => {
+        const sw = size <= 130 ? 10 : 12;
+        const radius = Math.max(30, Math.round((200 - sw) / 2 - 10));
+        const circumference = 2 * Math.PI * radius;
+        const offset = circumference - (value / 100) * circumference;
+        
+        const colors = {
+            cyan: { stroke: '#22d3ee', glow: 'rgba(34, 211, 238, 0.5)' },
+            rose: { stroke: '#f43f5e', glow: 'rgba(244, 63, 94, 0.5)' },
+            amber: { stroke: '#fbbf24', glow: 'rgba(251, 191, 36, 0.5)' },
+            emerald: { stroke: '#34d399', glow: 'rgba(52, 211, 153, 0.5)' },
+            purple: { stroke: '#a855f7', glow: 'rgba(168, 85, 247, 0.5)' }, 
+            indigo: { stroke: '#6366f1', glow: 'rgba(99, 102, 241, 0.5)' }, 
+        };
+        const theme = colors[color] || colors.cyan;
+        const isSmall = size <= 130;
+
+        return React.createElement('div', {
+            className: 'nx-gauge-wrap',
+            style: { width: size, height: size }
+        },
+            React.createElement('svg', { width: '100%', height: '100%', viewBox: '0 0 200 200', style: { transform: 'rotate(-90deg)', position: 'relative', zIndex: 10 } },
+                React.createElement('circle', { cx: '100', cy: '100', r: radius, stroke: 'var(--nx-border)', strokeWidth: String(sw), fill: 'transparent' }),
+                React.createElement('circle', { 
+                    cx: '100', cy: '100', r: radius, 
+                    stroke: theme.stroke, 
+                    strokeWidth: String(sw), 
+                    fill: 'transparent', 
+                    strokeDasharray: String(circumference), 
+                    strokeDashoffset: String(offset), 
+                    strokeLinecap: 'round',
+                    style: { filter: 'drop-shadow(0 0 8px ' + theme.glow + ')', transition: 'all 1s ease-out' }
+                })
+            ),
+            React.createElement('div', { className: 'nx-gauge-center' },
+                React.createElement('span', { className: 'nx-gauge-label' }, label),
+                React.createElement('span', { className: 'nx-gauge-value font-mono-nums', style: { color: theme.stroke, textShadow: '0 0 16px ' + theme.glow } },
+                    value + '%'
+                ),
+                !isSmall && React.createElement('span', { className: 'nx-gauge-subtext' }, subtext)
+            )
+        );
+    };
+
+    // --- 2. SECTOR BAR CHART ---
+    const SectorBarChart = ({ data, color = 'cyan' }) => {
+        if(!hasRecharts) return React.createElement(Fallback);
+        const colors = { cyan: '#06b6d4', purple: '#a855f7', blue: '#3b82f6' };
+        const barFill = colors[color] || colors.cyan;
+
+        return React.createElement(ResponsiveContainer, { width: '100%', height: '100%' },
+            React.createElement(BarChart, { data: data, margin: {top: 4, right: 8, left: -8, bottom: 2}, barGap: 2 },
+                React.createElement(CartesianGrid, { strokeDasharray: '3 3', stroke: 'var(--nx-border)', vertical: false }),
+                React.createElement(XAxis, { dataKey: 'name', tick: {fill: 'var(--nx-text-secondary)', fontSize: 8, fontWeight: 700}, axisLine: false, tickLine: false, interval: 0, height: 30 }),
+                React.createElement(YAxis, { stroke: 'var(--nx-text-secondary)', fontSize: 8, axisLine: false, tickLine: false, width: 24 }),
+                React.createElement(Tooltip, { cursor: {fill: 'rgba(255,255,255,0.05)'}, contentStyle: { backgroundColor: 'var(--nx-bg-panel)', borderColor: 'var(--nx-border)', borderRadius: '8px', fontSize: '11px' } }),
+                React.createElement(Bar, { dataKey: 'total', fill: 'var(--nx-border)', barSize: 14, radius: [3, 3, 0, 0] }),
+                React.createElement(Bar, { dataKey: 'occupied', fill: barFill, barSize: 14, radius: [3, 3, 0, 0] },
+                    (data||[]).map((entry, index) => React.createElement(Cell, { key: 'cell-' + index, fill: (entry.occupied||0) >= (entry.total||0) ? '#f43f5e' : barFill }))
+                )
+            )
+        );
+    };
+
+    // --- 3. FLOW BAR CHART ---
+    const FlowBarChart = ({ data }) => {
+        if(!hasRecharts) return React.createElement(Fallback);
+        return React.createElement(ResponsiveContainer, { width: '100%', height: '100%' },
+            React.createElement(BarChart, { data: data, margin: {top: 4, right: 8, left: -8, bottom: 2} },
+                React.createElement(CartesianGrid, { strokeDasharray: '3 3', stroke: 'var(--nx-border)', vertical: false }),
+                React.createElement(XAxis, { dataKey: 'name', tick: {fill: 'var(--nx-text-secondary)', fontSize: 8, fontWeight: 700}, axisLine: false, tickLine: false }),
+                React.createElement(YAxis, { stroke: 'var(--nx-text-secondary)', fontSize: 8, axisLine: false, tickLine: false, width: 24 }),
+                React.createElement(Tooltip, { cursor: {fill: 'rgba(255,255,255,0.05)'}, contentStyle: { backgroundColor: 'var(--nx-bg-panel)', borderColor: 'var(--nx-border)', borderRadius: '8px', fontSize: '11px' } }),
+                React.createElement(Bar, { dataKey: 'value', radius: [6, 6, 0, 0], barSize: 28 },
+                    (data||[]).map((entry, index) => React.createElement(Cell, { key: 'cell-' + index, fill: entry.fill }))
+                )
+            )
+        );
+    };
+
+    // --- 4. INSURANCE PIE CHART (Legend on right — Apple style) ---
+    const InsurancePieChart = ({ data }) => {
+        if(!hasRecharts) return React.createElement(Fallback);
+        const DONUT_COLORS = ['#22d3ee', '#818cf8', '#f472b6', '#34d399', '#fbbf24'];
+        return React.createElement(ResponsiveContainer, { width: '100%', height: '100%' },
+            React.createElement(PieChart, null,
+                React.createElement(Pie, { data: data, cx: '38%', cy: '50%', innerRadius: 30, outerRadius: 50, paddingAngle: 2, dataKey: 'value', stroke: 'none', startAngle: 90, endAngle: -270 },
+                    (data||[]).map((entry, index) => React.createElement(Cell, { key: 'cell-' + index, fill: DONUT_COLORS[index % DONUT_COLORS.length] }))
+                ),
+                React.createElement(Tooltip, { contentStyle: { backgroundColor: 'var(--nx-bg-panel)', borderColor: 'var(--nx-border)', borderRadius: '8px', fontSize: '11px' } }),
+                React.createElement(Legend, { 
+                    verticalAlign: 'middle', 
+                    align: 'right', 
+                    layout: 'vertical',
+                    iconType: 'circle', 
+                    iconSize: 6,
+                    wrapperStyle: { fontSize: '8px', paddingLeft: '4px' }
+                })
+            )
+        );
+    };
+
+    // --- 5. CAPACITY STACKED CHART ---
+    const CapacityStackedChart = ({ data }) => {
+        if(!hasRecharts) return React.createElement(Fallback);
+        return React.createElement(ResponsiveContainer, { width: '100%', height: '100%' },
+            React.createElement(BarChart, { data: data, margin: { top: 4, right: 8, left: -8, bottom: 2 } },
+                React.createElement(CartesianGrid, { strokeDasharray: '3 3', stroke: 'var(--nx-border)', vertical: false }),
+                React.createElement(XAxis, { dataKey: 'label', stroke: 'var(--nx-text-secondary)', fontSize: 8, tickLine: false, axisLine: false, tickFormatter: (v) => v.toUpperCase() }),
+                React.createElement(YAxis, { stroke: 'var(--nx-text-secondary)', fontSize: 8, tickLine: false, axisLine: false, width: 24 }),
+                React.createElement(Tooltip, { cursor: {fill: 'rgba(255,255,255,0.05)'}, contentStyle: { backgroundColor: 'var(--nx-bg-panel)', borderColor: 'var(--nx-border)', borderRadius: '8px', fontSize: '11px' } }),
+                React.createElement(Bar, { dataKey: 'blocked', stackId: 'a', name: 'Bloqueados', fill: '#475569', radius: [0, 0, 0, 0] }),
+                React.createElement(Bar, { dataKey: 'occupied', stackId: 'a', name: 'Ocupados', fill: '#1e40af' }),
+                React.createElement(Bar, { dataKey: 'forecast', stackId: 'a', name: 'Altas Previstas', fill: '#10b981' }),
+                React.createElement(Bar, { dataKey: 'free', stackId: 'a', name: 'Vagos Reais', fill: '#06b6d4', radius: [4, 4, 0, 0] }),
+                React.createElement(Bar, { dataKey: 'demand', name: 'Demanda', fill: '#f59e0b', radius: [4, 4, 4, 4], barSize: 20 })
+            )
+        );
+    };
+
+    window.App.Charts.RadialGauge = RadialGauge;
+    window.App.Charts.SectorBarChart = SectorBarChart;
+    window.App.Charts.FlowBarChart = FlowBarChart;
+    window.App.Charts.InsurancePieChart = InsurancePieChart;
+    window.App.Charts.CapacityStackedChart = CapacityStackedChart;
+
+  })();
+</script>

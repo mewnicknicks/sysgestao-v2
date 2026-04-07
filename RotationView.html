@@ -1,0 +1,344 @@
+
+<script>
+  (function() {
+    window.App = window.App || {};
+
+    var RotationView = function(props) {
+        var handlePrint = props.handlePrint;
+
+        var ctx = window.App.Context.useAppContext();
+        var user = ctx.user;
+        var appData = ctx.appData;
+        var actions = ctx.actions;
+
+        var UI = window.App.UI || {};
+        var ReportComponents = window.App.ReportComponents || {};
+        var ReportPage = ReportComponents.ReportPage;
+
+        if (!ReportPage) {
+            return React.createElement('div', { className: 'p-10 text-rose-500 font-mono' }, 'Erro: Componente ReportPage n\u00e3o carregado.');
+        }
+
+        var HospitalLogo = window.HospitalLogo;
+
+        // Hooks
+        var optimisticHook = window.App.Hooks.useOptimisticAction();
+        var isOptimistic = optimisticHook.isOptimistic;
+        var runOptimistic = optimisticHook.run;
+
+        var submitHook = UI.useSubmit ? UI.useSubmit() : { isSubmitting: false, submit: async function(fn) { return await fn(); } };
+        var isSubmitting = submitHook.isSubmitting;
+        var submit = submitHook.submit;
+
+        // Estado Local
+        var rotationListState = window.App.Hooks.useLocalState(appData.rotationList || [], isOptimistic);
+        var rotationList = rotationListState[0];
+        var setRotationList = rotationListState[1];
+
+        var rotationFormState = React.useState({ name: '', matricula: '' });
+        var rotationForm = rotationFormState[0];
+        var setRotationForm = rotationFormState[1];
+
+        var selectedRotationTypeState = React.useState('CLINICA');
+        var selectedRotationType = selectedRotationTypeState[0];
+        var setSelectedRotationType = selectedRotationTypeState[1];
+
+        var handleAddRotation = async function(e) {
+            e.preventDefault();
+            if (!rotationForm.name || !rotationForm.matricula) return;
+
+            await submit(async function() {
+                var newMember = {
+                    id: String(Date.now()),
+                    name: rotationForm.name.toUpperCase(),
+                    matricula: rotationForm.matricula.toUpperCase(),
+                    type: selectedRotationType
+                };
+
+                runOptimistic(
+                    function() {
+                        var updated = rotationList.concat([newMember]);
+                        setRotationList(updated);
+                        setRotationForm({ name: '', matricula: '' });
+                        if (UI.Toast) UI.Toast.show("M\u00e9dico adicionado ao rod\u00edzio.", "success");
+                    },
+                    function() { actions.addRotationMember(newMember); }
+                );
+            });
+        };
+
+        var handleDeleteRotation = async function(id) {
+            var ok = await UI.confirmThen("Remover m\u00e9dico da escala?");
+            if (!ok) return;
+            runOptimistic(
+                function() {
+                    var updated = rotationList.filter(function(r) { return r.id !== id; });
+                    setRotationList(updated);
+                    if (UI.Toast) UI.Toast.show("M\u00e9dico removido.", "success");
+                },
+                function() { actions.deleteRotationMember(id); }
+            );
+        };
+
+        var rotationPages = React.useMemo(function() {
+            var SLOTS_PER_PAGE = (window.App.Constants && window.App.Constants.REPORT_ROTATION_SLOTS_PER_PAGE) || 12;
+            var TOTAL_PAGES = (window.App.Constants && window.App.Constants.REPORT_ROTATION_TOTAL_PAGES) || 20;
+            var TOTAL_SLOTS = SLOTS_PER_PAGE * TOTAL_PAGES;
+
+            var doctors = rotationList.slice()
+                .filter(function(r) { return r && r.type === selectedRotationType; })
+                .sort(function(a, b) { return (a.name || '').toUpperCase().localeCompare((b.name || '').toUpperCase()); });
+
+            if (doctors.length === 0) {
+                return Array.from({ length: TOTAL_PAGES }).map(function(_, i) {
+                    return {
+                        pageNum: i + 1,
+                        totalPages: TOTAL_PAGES,
+                        items: Array(SLOTS_PER_PAGE).fill(null),
+                        startCount: (i * SLOTS_PER_PAGE) + 1,
+                        totalMembers: 0
+                    };
+                });
+            }
+
+            var masterSequence = [];
+            for (var i = 0; i < TOTAL_SLOTS; i++) {
+                masterSequence.push(doctors[i % doctors.length]);
+            }
+
+            var pages = [];
+            for (var j = 0; j < TOTAL_PAGES; j++) {
+                var startIndex = j * SLOTS_PER_PAGE;
+                pages.push({
+                    pageNum: j + 1,
+                    totalPages: TOTAL_PAGES,
+                    items: masterSequence.slice(startIndex, startIndex + SLOTS_PER_PAGE),
+                    startCount: startIndex + 1,
+                    totalMembers: doctors.length
+                });
+            }
+            return pages;
+        }, [rotationList, selectedRotationType]);
+
+        var sidebarRotationList = React.useMemo(function() {
+            return rotationList.filter(function(r) { return r.type === selectedRotationType; }).sort(function(a, b) { return a.name.localeCompare(b.name); });
+        }, [rotationList, selectedRotationType]);
+
+        return React.createElement('div', { className: 'h-full flex flex-col lg:flex-row gap-6' },
+            React.createElement('div', { className: 'w-full lg:w-96 flex flex-col gap-4 shrink-0 print-hidden h-full overflow-y-auto' },
+                React.createElement(UI.Card, { className: 'p-6 flex flex-col gap-6' },
+                    React.createElement('div', { className: 'flex nx-form-section p-1 rounded-lg' },
+                        React.createElement('button', { onClick: function() { setSelectedRotationType('CLINICA'); }, className: 'flex-1 py-2 text-[10px] font-bold uppercase tracking-widest rounded transition-all ' + (selectedRotationType === 'CLINICA' ? 'bg-blue-600 text-white shadow-lg' : 'text-blue-400 hover:text-blue-600') }, 'Cl\u00ednica M\u00e9dica'),
+                        React.createElement('button', { onClick: function() { setSelectedRotationType('CARDIO'); }, className: 'flex-1 py-2 text-[10px] font-bold uppercase tracking-widest rounded transition-all ' + (selectedRotationType === 'CARDIO' ? 'bg-rose-600 text-white shadow-lg' : 'text-blue-400 hover:text-blue-600') }, 'Cardiologia')
+                    ),
+
+                    React.createElement('form', { onSubmit: handleAddRotation, className: 'flex flex-col gap-4 nx-separator pb-6' },
+                        React.createElement(UI.Input, { label: "Nome do M\u00e9dico", value: rotationForm.name, onChange: function(e) { setRotationForm(Object.assign({}, rotationForm, { name: e.target.value.toUpperCase() })); }, required: true, icon: "ph-user-md", disabled: isSubmitting }),
+                        React.createElement(UI.Input, { label: "Matr\u00edcula / CRM", value: rotationForm.matricula, onChange: function(e) { setRotationForm(Object.assign({}, rotationForm, { matricula: e.target.value.toUpperCase() })); }, required: true, icon: "ph-identification-badge", disabled: isSubmitting }),
+                        React.createElement('button', { type: 'submit', disabled: isSubmitting, className: 'btn-action-confirm w-full' },
+                            React.createElement('i', { className: 'ph-bold ph-plus text-lg' }),
+                            ' ', isSubmitting ? 'Adicionando...' : 'Adicionar \u00e0 Lista'
+                        )
+                    ),
+
+                    React.createElement('div', { className: 'flex-1 overflow-y-auto custom-scrollbar max-h-[400px]' },
+                        React.createElement('h4', { className: 'nx-text-label mb-3' }, 'Membros na Escala (' + sidebarRotationList.length + ')'),
+                        React.createElement('div', { className: 'flex flex-col gap-2' },
+                            sidebarRotationList.map(function(member) {
+                                return React.createElement('div', { key: member.id, className: 'nx-list-item group !p-3' },
+                                    React.createElement('div', null,
+                                        React.createElement('span', { className: 'text-xs font-bold nx-text-heading block uppercase' }, member.name),
+                                        React.createElement('span', { className: 'nx-text-label font-mono' }, member.matricula)
+                                    ),
+                                    React.createElement('button', { onClick: function() { handleDeleteRotation(member.id); }, className: 'p-2 text-blue-300 dark:text-slate-600 hover:text-rose-500 transition-colors opacity-0 group-hover:opacity-100' },
+                                        React.createElement('i', { className: 'ph-bold ph-trash text-lg' })
+                                    )
+                                );
+                            }),
+                            sidebarRotationList.length === 0 && React.createElement('div', { className: 'text-center py-4 text-blue-300 dark:text-slate-600 text-[10px] italic' }, 'Nenhum m\u00e9dico cadastrado.')
+                        )
+                    ),
+
+                    React.createElement('button', { onClick: handlePrint, className: 'btn-action-confirm w-full mt-auto' },
+                        React.createElement('i', { className: 'ph-bold ph-printer text-lg mr-2' }),
+                        ' Imprimir Kit Rod\u00edzio (' + (4 + rotationPages.length) + ' P\u00e1g)'
+                    )
+                )
+            ),
+
+            React.createElement('div', { className: 'flex-1 overflow-auto custom-scrollbar relative flex flex-col items-center bg-transparent py-[10px] gap-8 print:gap-0 print:py-0 print:block' },
+
+                // 1. CAPA
+                React.createElement('div', { className: 'paper-page flex flex-col items-center justify-between text-center border-b-8 border-cyan-900' },
+                    React.createElement('div', { className: 'mt-20 opacity-80 filter grayscale' },
+                        HospitalLogo
+                            ? React.createElement(HospitalLogo, { className: 'h-32 w-auto' })
+                            : React.createElement('h1', { className: 'text-5xl font-black' }, 'HOSPITAL')
+                    ),
+                    React.createElement('div', { className: 'flex flex-col justify-center items-center w-full' },
+                        React.createElement('h1', { className: 'text-6xl font-black uppercase tracking-tighter mb-6 text-black' }, 'Escala de Rod\u00edzio'),
+                        React.createElement('div', { className: 'h-2 w-48 bg-black mb-6' }),
+                        React.createElement('h2', { className: 'text-4xl font-bold uppercase tracking-widest text-slate-900' }, selectedRotationType === 'CLINICA' ? 'CL\u00cdNICA M\u00c9DICA' : 'CARDIOLOGIA')
+                    ),
+                    React.createElement('div', { className: 'mb-20 w-full text-center' },
+                        React.createElement('p', { className: 'text-2xl font-bold uppercase' }, new Date().toLocaleString('pt-BR', { month: 'long', year: 'numeric' }))
+                    )
+                ),
+
+                // 2. INFORMATIVO
+                React.createElement(ReportPage, {
+                    headerProps: { title: "Informativo Geral", subtitle: "Normas e Procedimentos" },
+                    footerProps: { text: "Diretoria T\u00e9cnica" }
+                },
+                    React.createElement('div', { className: 'p-8' },
+                        React.createElement('h3', { className: 'text-lg font-bold uppercase mb-4 border-b border-black pb-2' }, 'Orienta\u00e7\u00f5es para Interna\u00e7\u00f5es Hospitalares'),
+                        React.createElement('div', { className: 'space-y-4 text-xs text-justify font-sans leading-relaxed' },
+                            React.createElement('div', null,
+                                React.createElement('h4', { className: 'font-bold uppercase mb-1' }, '1. Gastroenterologia'),
+                                React.createElement('p', null, 'As interna\u00e7\u00f5es para a especialidade de Gastroenterologia devem seguir rigorosamente a escala da Gastro.')
+                            ),
+                            React.createElement('div', null,
+                                React.createElement('h4', { className: 'font-bold uppercase mb-1' }, '2. Nefrologia'),
+                                React.createElement('p', null, 'Todos os pacientes que necessitarem de interna\u00e7\u00e3o para Nefrologia devem ser direcionados para o Dr. H\u00e9lcio.')
+                            ),
+                            React.createElement('div', null,
+                                React.createElement('h4', { className: 'font-bold uppercase mb-1' }, '3. Pneumologia'),
+                                React.createElement('p', null, 'As interna\u00e7\u00f5es para Pneumologia devem ser feitas para o plantonista da especialidade no momento.')
+                            ),
+                            React.createElement('div', null,
+                                React.createElement('h4', { className: 'font-bold uppercase mb-1' }, '4. Neurocirurgia e Oncologia'),
+                                React.createElement('p', null, 'Carolina Ferreira de Oliveira, Laura Furbino, Rodrigo Serafim, Larissa Perisse.')
+                            ),
+                            React.createElement('div', null,
+                                React.createElement('h4', { className: 'font-bold uppercase mb-1' }, '5. Rod\u00edzios de Especialidades'),
+                                React.createElement('p', null, 'Existem dois rod\u00edzios distintos a serem seguidos:'),
+                                React.createElement('ul', { className: 'list-disc pl-5 mt-1' },
+                                    React.createElement('li', null, 'Um para Cl\u00ednica M\u00e9dica'),
+                                    React.createElement('li', null, 'Outro para Cardiologia')
+                                )
+                            ),
+                            React.createElement('div', null,
+                                React.createElement('h4', { className: 'font-bold uppercase mb-1' }, '6. Pacientes em Apartamentos'),
+                                React.createElement('p', null, 'Os pacientes internados em apartamentos devem ser alocados conforme a tabela de rod\u00edzio vigente.')
+                            ),
+                            React.createElement('div', null,
+                                React.createElement('h4', { className: 'font-bold uppercase mb-1' }, '7. Troca de M\u00e9dicos'),
+                                React.createElement('p', null, 'Os pacientes que est\u00e3o tendo alta do CTI devem ter os m\u00e9dicos trocados quando forem alocados na Unidade de interna\u00e7\u00e3o.')
+                            ),
+                            React.createElement('div', null,
+                                React.createElement('h4', { className: 'font-bold uppercase mb-1' }, '8. Aviso de Interna\u00e7\u00e3o'),
+                                React.createElement('p', null, 'Ap\u00f3s a interna\u00e7\u00e3o de um paciente, \u00e9 importante lembrar que o aviso ao m\u00e9dico sobre a interna\u00e7\u00e3o realizada \u00e9 indispens\u00e1vel.')
+                            )
+                        )
+                    )
+                ),
+
+                // 3. INFORMA\u00c7\u00d5ES CTI
+                React.createElement(ReportPage, {
+                    headerProps: { title: "Informa\u00e7\u00f5es do CTI", subtitle: "Escala de Rotina" },
+                    footerProps: { text: "Coordena\u00e7\u00e3o de Terapia Intensiva" }
+                },
+                    React.createElement('div', { className: 'p-8 flex flex-col h-full' },
+                        React.createElement('div', { className: 'w-full mb-8' },
+                            React.createElement('table', { className: 'w-full text-xs border-collapse border border-black text-center' },
+                                React.createElement('thead', null,
+                                    React.createElement('tr', { className: 'bg-gray-100 font-bold' },
+                                        React.createElement('th', { className: 'border border-black p-2 w-16' }, 'CTI'),
+                                        React.createElement('th', { className: 'border border-black p-2 text-left' }, 'M\u00e9dico (a) assistente na interna\u00e7\u00e3o - CTI'),
+                                        React.createElement('th', { className: 'border border-black p-2 w-24' }, 'C\u00f3d. M\u00e9dico'),
+                                        React.createElement('th', { className: 'border border-black p-2 w-24' }, 'CRM-MG')
+                                    )
+                                ),
+                                React.createElement('tbody', null,
+                                    (window.App.Constants && window.App.Constants.REPORT_CTI_DOCTORS || []).map(function(row, idx) {
+                                        return React.createElement('tr', { key: idx },
+                                            React.createElement('td', { className: 'border border-black p-2 font-bold' }, row.cti),
+                                            React.createElement('td', { className: 'border border-black p-2 text-left font-medium whitespace-nowrap' }, row.doc),
+                                            React.createElement('td', { className: 'border border-black p-2' }, row.cod),
+                                            React.createElement('td', { className: 'border border-black p-2' }, row.crm)
+                                        );
+                                    })
+                                )
+                            )
+                        ),
+                        React.createElement('div', { className: 'mt-4 flex-1' },
+                            React.createElement('h3', { className: 'text-xl text-center font-normal mb-4' }, 'Notas:'),
+                            React.createElement('div', { className: 'flex flex-col gap-8' },
+                                React.createElement('div', { className: 'border-b-2 border-black h-8 w-full' }),
+                                React.createElement('div', { className: 'border-b-2 border-black h-8 w-full' }),
+                                React.createElement('div', { className: 'border-b-2 border-black h-8 w-full' }),
+                                React.createElement('div', { className: 'border-b-2 border-black h-8 w-full' }),
+                                React.createElement('div', { className: 'border-b-2 border-black h-8 w-full' })
+                            )
+                        )
+                    )
+                ),
+
+                // 4. AUS\u00caNCIA M\u00c9DICA
+                React.createElement(ReportPage, {
+                    headerProps: { title: "Aus\u00eancia M\u00e9dica", subtitle: "Registro de Afastamentos" },
+                    footerProps: { text: "Diretoria T\u00e9cnica" }
+                },
+                    React.createElement('div', { className: 'p-8' },
+                        React.createElement('table', { className: 'w-full text-xs border-collapse border border-black' },
+                            React.createElement('thead', null,
+                                React.createElement('tr', { className: 'bg-gray-100 font-bold' },
+                                    React.createElement('th', { className: 'border border-black p-2 text-left' }, 'Nome do M\u00e9dico'),
+                                    React.createElement('th', { className: 'border border-black p-2 w-32 text-center' }, 'In\u00edcio'),
+                                    React.createElement('th', { className: 'border border-black p-2 w-32 text-center' }, 'Retorno')
+                                )
+                            ),
+                            React.createElement('tbody', null,
+                                Array.from({ length: (window.App.Constants && window.App.Constants.REPORT_ABSENCE_ROWS) || 18 }).map(function(_, idx) {
+                                    return React.createElement('tr', { key: idx, className: 'h-10' },
+                                        React.createElement('td', { className: 'border border-black p-2' }),
+                                        React.createElement('td', { className: 'border border-black p-2' }),
+                                        React.createElement('td', { className: 'border border-black p-2' })
+                                    );
+                                })
+                            )
+                        )
+                    )
+                ),
+
+                // 5. ESCALA PAGINADA
+                rotationPages.map(function(page, idx) {
+                    return React.createElement(ReportPage, {
+                        key: 'schedule-' + idx,
+                        className: 'mb-8 print:mb-0 p-[10mm]',
+                        headerProps: { title: "Escala de Rod\u00edzio", subtitle: selectedRotationType === 'CLINICA' ? 'CL\u00cdNICA M\u00c9DICA' : 'CARDIOLOGIA' },
+                        footerProps: {
+                            text: "Documento gerado eletronicamente por SysGest\u00e3o",
+                            pageInfo: React.createElement('div', { className: 'flex flex-col items-end' },
+                                React.createElement('span', { className: 'text-[10px] font-bold uppercase text-black tracking-widest' }, 'P\u00e1gina ' + page.pageNum + ' de ' + page.totalPages),
+                                React.createElement('span', { className: 'text-[8px] font-bold text-slate-400 tracking-widest mt-0.5' }, 'Membros na Lista: ' + page.totalMembers)
+                            )
+                        }
+                    },
+                        React.createElement('div', { className: 'flex items-start justify-center pt-2' },
+                            React.createElement('div', { className: 'grid grid-cols-2 gap-x-4 gap-y-5 w-full' },
+                                page.items.map(function(member, slotIdx) {
+                                    return React.createElement('div', { key: 'slot-' + idx + '-' + slotIdx, className: 'flex flex-col relative' },
+                                        React.createElement('div', { className: 'border border-black rounded-xl flex items-center justify-center relative shadow-sm bg-white h-[2.4cm]' },
+                                            React.createElement('span', { className: 'absolute top-1 left-2 text-[8px] font-bold text-slate-400' }, 'SLOT ' + (page.startCount + slotIdx)),
+                                            !member && React.createElement('span', { className: 'text-xs text-slate-300 uppercase font-bold italic' }, 'VAGO')
+                                        ),
+                                        React.createElement('div', { className: 'mt-1 text-center px-1 min-h-[2em] flex flex-col items-center justify-start gap-0.5' },
+                                            member && React.createElement(React.Fragment, null,
+                                                React.createElement('span', { className: 'text-[10px] font-black uppercase leading-tight block text-black truncate w-full' }, member.name),
+                                                React.createElement('span', { className: 'text-[9px] font-mono font-bold text-slate-700 block leading-tight tracking-wider' }, member.matricula)
+                                            )
+                                        )
+                                    );
+                                })
+                            )
+                        )
+                    );
+                })
+            )
+        );
+    };
+
+    window.App.RotationView = RotationView;
+  })();
+</script>

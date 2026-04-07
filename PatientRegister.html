@@ -1,0 +1,360 @@
+<script>
+  (function() {
+    window.App = window.App || {};
+
+    // Recebe apenas props de navegação/callback, pois dados globais vêm do Context
+    var PatientRegister = function(props) {
+      var preFillData = props.preFillData;
+      var onClearPreFill = props.onClearPreFill;
+      var onRefresh = props.onRefresh;
+      
+      const { user, patientsList, blockedBedsList, actions, structure, onGlobalUpdate } = window.App.Context.useAppContext();
+      const UI = window.App.UI || {};
+      const Utils = window.App.Utils || {};
+      
+      // --- PADRÃO OTIMISTA (HOOKS) ---
+      const { isOptimistic, run: runOptimistic } = window.App.Hooks.useOptimisticAction();
+      const [localPatients, setLocalPatients] = window.App.Hooks.useLocalState(patientsList || [], isOptimistic);
+
+      // Form State
+      const initialForm = { 
+          id: '', name: '', attendance: '', insurance: '', sector: '', bed: '', 
+          assistantDoctor: '', diagnosis: '', birthDate: '', age: '', gender: '', priority: false,
+          createdAt: '', bedHistory: [], _v: 0 // VERSION FIELD
+      };
+      
+      const [formData, setFormData] = React.useState(initialForm);
+      const [isEditing, setIsEditing] = React.useState(false);
+      const formRef = React.useRef(null);
+      
+      // UI States
+      const [showDbModal, setShowDbModal] = React.useState(false);
+      const [showMenu, setShowMenu] = React.useState(false); 
+      const [dbFilters, setDbFilters] = React.useState({ search: '', insurance: '', startDate: '', endDate: '' });
+      const { isSubmitting, submit } = (UI.useSubmit ? UI.useSubmit() : { isSubmitting: false, submit: async (fn) => await fn() });
+
+      // --- PRE-FILL (Transferência ou P.A.) ---
+      React.useEffect(() => {
+          if (preFillData) {
+              let targetSector = preFillData.sector || '';
+              
+              setFormData(prev => ({
+                  ...initialForm,
+                  ...prev,
+                  name: preFillData.name || '',
+                  insurance: preFillData.insurance || '',
+                  sector: targetSector,
+                  assistantDoctor: preFillData.assistantDoctor || '',
+                  priority: !!preFillData.priority
+              }));
+              
+              if (onClearPreFill) onClearPreFill();
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+              if(UI.Toast) UI.Toast.show("Dados importados para admissão.", "info");
+          }
+      }, [preFillData]);
+
+      // --- OPTIONS ---
+      const INSURANCE_OPTIONS = window.App.INSURANCE_OPTIONS || [];
+      
+      // --- SOFT CODING: MENU DIRETO DO BANCO (SEM LIGAÇÃO COM BRAIN) ---
+      const SECTOR_OPTIONS = React.useMemo(() => {
+          // 1. Obtém a lista exata de strings configurada no DIM_DICIONARIOS
+          const dictionaryEntries = structure.menus?.['REGISTRO'] || [];
+          
+          if (dictionaryEntries.length > 0) {
+              return dictionaryEntries.map(s => ({ value: s, label: s }));
+          }
+
+          // Fallback: Apenas se a lista do banco estiver vazia, lista os setores existentes
+          return (structure?.sectors || [])
+              .sort((a,b) => (a.order || 0) - (b.order || 0))
+              .map(s => ({ value: s.name, label: s.name }));
+      }, [structure]);
+
+
+      // --- DASHBOARD STATS (ATUALIZADO: HOJE vs TOTAL) ---
+      const stats = React.useMemo(() => {
+          const strategicList = window.App.Constants.STRATEGIC_INSURANCES || []; 
+          return Utils.calculatePatientStats(localPatients, strategicList);
+      }, [localPatients, Utils]);
+
+      // --- LISTAS AUXILIARES ---
+      const waitList = React.useMemo(() => {
+          return localPatients
+              .filter(p => !p.bed && !['SIM','ALTA','OBITO'].includes(String(p.dischargeStatus).toUpperCase()))
+              .sort((a,b) => {
+                  if (a.priority !== b.priority) return a.priority ? -1 : 1; 
+                  return new Date(b.createdAt) - new Date(a.createdAt);
+              });
+      }, [localPatients]);
+
+      const filteredDbList = React.useMemo(() => {
+          return localPatients.filter(p => {
+              if (dbFilters.search) {
+                  const s = dbFilters.search.toUpperCase();
+                  if (!String(p.name).toUpperCase().includes(s) && !String(p.attendance).toUpperCase().includes(s)) return false;
+              }
+              if (dbFilters.insurance && p.insurance !== dbFilters.insurance) return false;
+              if (dbFilters.startDate && (p.createdAt || '').split('T')[0] < dbFilters.startDate) return false;
+              if (dbFilters.endDate && (p.createdAt || '').split('T')[0] > dbFilters.endDate) return false;
+              return true;
+          }).sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
+      }, [localPatients, dbFilters]);
+
+      // --- ACTIONS HANDLERS ---
+
+      const handleInputChange = (e) => {
+          const { name, value } = e.target;
+          setFormData(prev => ({ ...prev, [name]: value.toUpperCase() }));
+      };
+
+      // --- VALIDAÇÃO DE DUPLICIDADE (CRÍTICO) ---
+      const checkDuplicity = () => {
+          const val = formData.attendance;
+          if (!val) return;
+          
+          // Verifica se já existe na lista de pacientes ativos/fila interna
+          const duplicate = localPatients.find(p => 
+              String(p.attendance).trim() === String(val).trim() && 
+              String(p.id) !== String(formData.id) && // Ignora o próprio registro se estiver editando
+              !['SIM','ALTA','OBITO'].includes(String(p.dischargeStatus).toUpperCase()) // Apenas ativos
+          );
+
+          if (duplicate) {
+              if(UI.Toast) UI.Toast.show(`ERRO: Atendimento ${val} já está em uso por ${duplicate.name} (${duplicate.bed || 'Fila'}).`, "error");
+              setFormData(prev => ({ ...prev, attendance: '' })); // Limpa o campo para forçar correção
+          }
+      };
+
+      const handleEdit = (p) => {
+          let history = [];
+          try {
+              if (typeof p.bedHistory === 'string') history = JSON.parse(p.bedHistory);
+              else if (Array.isArray(p.bedHistory)) history = p.bedHistory;
+          } catch(e) {}
+
+          setFormData({
+              id: p.id,
+              name: p.name || '',
+              attendance: p.attendance || '',
+              insurance: p.insurance || '',
+              sector: p.sector || '',
+              bed: p.bed || '',
+              assistantDoctor: p.assistantDoctor || '',
+              diagnosis: p.diagnosis || '',
+              birthDate: (p.birthDate || '').split('T')[0],
+              age: p.age || '',
+              gender: p.gender || '',
+              priority: p.priority || false,
+              createdAt: p.createdAt || '', 
+              bedHistory: history,
+              _v: p._v || 0 // CAPTURA VERSÃO
+          });
+          setIsEditing(true);
+          setShowDbModal(false);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+      };
+
+      const handleSave = async (e) => {
+          e.preventDefault();
+          
+          // Previne duplo-submit
+          if (isSubmitting) return;
+          
+          try {
+              // ✅ VALIDAÇÃO: usando UI.Validators centralizado
+              try {
+                  UI.Validators?.nonEmpty(formData.attendance, 'Número de Atendimento');
+                  UI.Validators?.nonEmpty(formData.name, 'Nome do paciente');
+                  UI.Validators?.nonEmpty(formData.insurance, 'Convênio');
+                  // idade opcional: valida se presente
+                  if (formData.age && formData.age !== '') {
+                      const age = parseInt(formData.age, 10);
+                      if (isNaN(age) || age < 0 || age > 150) throw new Error('Idade inválida (0-150)');
+                  }
+              } catch (vErr) {
+                  UI.Toast?.show?.(`❌ ${vErr.message}`, 'warning');
+                  // tenta focar no input correspondente
+                  try {
+                      if (vErr.message.includes('Atendimento')) formRef.current?.querySelector('input[name="attendance"]')?.focus();
+                      if (vErr.message.includes('Nome')) formRef.current?.querySelector('input[name="name"]')?.focus();
+                      if (vErr.message.includes('Convênio')) formRef.current?.querySelector('select[name="insurance"]')?.focus();
+                  } catch(e){}
+                  return;
+              }
+              
+              UI.Toast?.show?.("⏳ Salvando paciente...", "loading");
+              
+              const id = isEditing ? formData.id : String(Date.now());
+              const createdAt = (isEditing && formData.createdAt) ? formData.createdAt : new Date().toISOString();
+
+              let newBedHistory = [...(formData.bedHistory || [])];
+              if (formData.bed) {
+                  const lastBed = newBedHistory.length > 0 ? newBedHistory[newBedHistory.length - 1] : null;
+                  if (lastBed !== formData.bed) newBedHistory.push(formData.bed);
+              }
+
+              const payload = {
+                  id: id,
+                  name: formData.name.trim(),
+                  attendance: formData.attendance.trim(),
+                  insurance: formData.insurance,
+                  sector: formData.sector || '',
+                  bed: formData.bed || '',
+                  assistantDoctor: (formData.assistantDoctor || '').trim(),
+                  diagnosis: (formData.diagnosis || '').trim(),
+                  birthDate: formData.birthDate || '',
+                  age: formData.age || '',
+                  gender: formData.gender || '',
+                  priority: !!formData.priority,
+                  createdAt: createdAt,
+                  dischargeStatus: 'NAO',
+                  bedHistory: newBedHistory,
+                  _v: formData._v // Envia versão para checagem
+              };
+
+              runOptimistic(
+                  () => {
+                      let updatedList;
+                      if (isEditing) updatedList = localPatients.map(p => p.id === id ? { ...p, ...payload } : p);
+                      else updatedList = [payload, ...localPatients];
+                      
+                      setLocalPatients(updatedList);
+                      if (onGlobalUpdate) onGlobalUpdate('patients', updatedList);
+
+                      UI.Toast?.show?.(isEditing ? "✅ Paciente atualizado!" : "✅ Paciente registrado!", "success");
+                      
+                      // RESET FORM & FOCUS
+                      setFormData(initialForm);
+                      setIsEditing(false);
+                      setTimeout(() => {
+                          if (formRef.current) {
+                              const firstInput = formRef.current.querySelector('input:not([disabled]), select:not([disabled])');
+                              if (firstInput) firstInput.focus();
+                          }
+                      }, 100);
+                  },
+                  async () => await submit(async () => {
+                      let result;
+                      if (isEditing) result = await actions.updatePatient(payload);
+                      else result = await actions.savePatient(payload);
+                      
+                      if (result && result.status === 'ERROR') {
+                          throw new Error(result.message || "Erro ao salvar paciente");
+                      }
+                  })
+              );
+          } catch (error) {
+              console.error("Erro ao salvar paciente:", error);
+              UI.Toast?.show?.(`❌ ${error.message || "Erro ao salvar paciente"}`, "error");
+          }
+      };
+
+      const handleTogglePriority = (p) => {
+          const newStatus = !p.priority;
+          const updatedP = { ...p, priority: newStatus };
+          
+          runOptimistic(
+              () => {
+                  const updatedList = localPatients.map(item => item.id === p.id ? updatedP : item);
+                  setLocalPatients(updatedList);
+                  if (onGlobalUpdate) onGlobalUpdate('patients', updatedList);
+              },
+              async () => await actions.updatePatient(updatedP)
+          );
+      };
+
+      const handleDelete = async (id) => {
+          const ok = await UI.confirmThen("Tem certeza que deseja excluir permanentemente este registro?");
+          if (!ok) return;
+          
+          runOptimistic(
+              () => {
+                  const newList = localPatients.filter(item => item.id !== id);
+                  setLocalPatients(newList);
+                  if (onGlobalUpdate) onGlobalUpdate('patients', newList);
+                  
+                  if (isEditing && formData.id === id) {
+                      setFormData(initialForm);
+                      setIsEditing(false);
+                  }
+                  UI.Toast?.show?.("Registro removido.", "success");
+              },
+              async () => await submit(async () => await actions.deletePatient(id))
+          );
+      };
+
+      const copyToClipboard = (text) => {
+          if (!text) return;
+          navigator.clipboard.writeText(text);
+          UI.Toast.show(`Copiado: ${text}`, "success");
+      };
+
+      const { 
+        PatientRegisterStats, 
+        PatientRegisterForm, 
+        PatientRegisterWaitList, 
+        PatientRegisterDatabaseModal 
+      } = window.App.PatientRegisterComponents || {};
+
+      if (!PatientRegisterStats || !PatientRegisterForm || !PatientRegisterWaitList || !PatientRegisterDatabaseModal) {
+          return React.createElement('div', { className: 'p-10 text-rose-500 font-mono' }, 'Erro: Componentes de Registro de Pacientes não carregados.');
+      }
+
+      return React.createElement('div', { className: 'nx-container !h-auto !overflow-visible px-10 pt-5 pb-24 animate-fade-in' },
+          React.createElement('div', { className: 'nx-header' },
+              React.createElement('div', { className: 'nx-header-title-group' },
+                  React.createElement('h1', { className: 'nx-header-title' }, 'Registro de Pacientes'),
+                  React.createElement('p', { className: 'nx-header-subtitle' }, 'Admissão e Cadastro ', isOptimistic && React.createElement('span', { className: 'nx-sync-indicator' }, 'SINCRONIZANDO...'))
+              ),
+              React.createElement('div', { className: 'relative' },
+                  React.createElement('button', { onClick: function() { setShowMenu(!showMenu); }, className: 'nx-header-btn group' },
+                      React.createElement('i', { className: 'ph-bold ph-list text-2xl group-hover:scale-110 transition-transform' })
+                  ),
+                  showMenu && React.createElement(React.Fragment, null,
+                      React.createElement('div', { className: 'nx-dropdown-overlay', onClick: function() { setShowMenu(false); } }),
+                      React.createElement('div', { className: 'nx-dropdown-menu' },
+                          React.createElement('button', { onClick: function() { setShowDbModal(true); setShowMenu(false); }, className: 'nx-dropdown-btn' },
+                              React.createElement('div', { className: 'flex items-center gap-2' },
+                                  React.createElement('i', { className: 'ph-bold ph-database text-blue-400 text-lg' }),
+                                  React.createElement('span', null, 'Pacientes Internados')
+                              )
+                          )
+                      )
+                  )
+              )
+          ),
+          React.createElement('div', { className: 'nx-header-divider' }),
+          React.createElement('div', null,
+              React.createElement(PatientRegisterStats, { stats: stats }),
+              React.createElement('div', { className: 'grid grid-cols-1 lg:grid-cols-2 gap-8 h-full items-start' },
+                  React.createElement('div', { className: 'lg:col-span-1' },
+                      React.createElement(PatientRegisterForm, { 
+                        formData: formData, handleInputChange: handleInputChange, checkDuplicity: checkDuplicity, 
+                        handleSave: handleSave, handleDelete: handleDelete, isEditing: isEditing, 
+                        isSubmitting: isSubmitting, initialForm: initialForm, setFormData: setFormData, 
+                        setIsEditing: setIsEditing, formRef: formRef, INSURANCE_OPTIONS: INSURANCE_OPTIONS, 
+                        SECTOR_OPTIONS: SECTOR_OPTIONS, structure: structure, localPatients: localPatients, 
+                        blockedBedsList: blockedBedsList
+                      })
+                  ),
+                  React.createElement('div', { className: 'lg:col-span-1 h-full' },
+                      React.createElement(PatientRegisterWaitList, { 
+                        waitList: waitList, handleEdit: handleEdit, handleTogglePriority: handleTogglePriority 
+                      })
+                  )
+              ),
+              React.createElement(PatientRegisterDatabaseModal, { 
+                showDbModal: showDbModal, setShowDbModal: setShowDbModal, dbFilters: dbFilters, 
+                setDbFilters: setDbFilters, INSURANCE_OPTIONS: INSURANCE_OPTIONS, filteredDbList: filteredDbList, 
+                handleTogglePriority: handleTogglePriority, handleEdit: handleEdit, handleDelete: handleDelete, 
+                copyToClipboard: copyToClipboard
+              })
+          )
+      );
+    };
+
+    window.App.PatientRegister = PatientRegister;
+  })();
+</script>
